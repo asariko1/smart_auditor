@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Smart Schedule Auditor</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; background: #f8f9fa; color: #333; margin: 0; }
+        /* Create a side-by-side layout */
+        .app-container { display: flex; flex-direction: row; gap: 20px; max-width: 1200px; margin: auto; align-items: flex-start; }
+        
+        /* Main Audit Tool Panel */
+        .main-panel { flex: 2; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+        h2 { margin-top: 0; color: #1a1a1a; }
+        .input-group { margin-bottom: 25px; }
+        .input-group label { font-weight: bold; font-size: 14px; display: block; margin-bottom: 8px; }
+        input[type="text"] { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-family: monospace; }
+        .drop-zone { border: 2px dashed #007bff; padding: 25px; text-align: center; margin-bottom: 15px; border-radius: 8px; cursor: pointer; transition: 0.2s; background: #fafcff; }
+        .drop-zone:hover { background: #e6f0ff; border-color: #0056b3; }
+        button { width: 100%; padding: 16px; background: #007bff; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: 600; margin-top: 10px; transition: 0.2s; }
+        button:hover { background: #0056b3; }
+        #output { margin-top: 20px; white-space: pre-wrap; background: #f1f3f5; padding: 20px; border-radius: 8px; line-height: 1.6; border: 1px solid #e9ecef; }
+        .file-name { font-size: 0.85em; color: #555; margin-top: 8px; font-weight: bold; }
+
+        /* System Console Panel */
+        .console-panel { flex: 1; background: #1e1e1e; color: #e0e0e0; padding: 20px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); font-family: monospace; position: sticky; top: 20px; }
+        .console-panel h3 { margin-top: 0; color: #00ffcc; border-bottom: 1px solid #333; padding-bottom: 10px; font-size: 16px; }
+        #systemLog { list-style: none; padding: 0; margin: 0; font-size: 13px; line-height: 1.5; }
+        #systemLog li { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px dashed #333; }
+        .log-time { color: #888; font-size: 11px; margin-right: 5px; }
+        .status-ok { color: #00ff00; font-weight: bold; }
+        .status-error { color: #ff4444; font-weight: bold; }
+	  .token-count { color: #00ccff; font-weight: bold; border-bottom: 1px solid #00ccff; padding-bottom: 2px; }
+        .status-wait { color: #ffaa00; font-weight: bold; }
+        
+        /* Mobile responsiveness */
+        @media (max-width: 800px) {
+            .app-container { flex-direction: column; }
+            .console-panel { width: 100%; box-sizing: border-box; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="app-container">
+    <div class="main-panel">
+        <h2>Smart AEM Auditor</h2>
+        <p>Compare Day View against the Compass PDF (V1.0).</p>
+
+        <div class="input-group">
+            <label>Gemini API Key</label>
+            <input type="text" id="apiKey" placeholder="Paste your API Key here...">
+        </div>
+        
+        <div class="drop-zone" onclick="document.getElementById('excelFile').click()">
+            <strong>1. Upload Excel/CSV File</strong>
+            <input type="file" id="excelFile" hidden accept=".xlsx, .csv">
+            <div id="excelName" class="file-name">No file selected</div>
+        </div>
+
+        <div class="drop-zone" onclick="document.getElementById('pdfFile').click()">
+            <strong>2. Upload Master PDF (.pdf)</strong>
+            <input type="file" id="pdfFile" hidden accept=".pdf">
+            <div id="pdfName" class="file-name">No file selected</div>
+        </div>
+
+        <button id="runBtn">Run Audit</button>
+
+        <div id="output">Results will appear here...</div>
+    </div>
+
+    <div class="console-panel">
+        <h3>System Console</h3>
+        <ul id="systemLog">
+            <li><span class="log-time">System</span> Ready for input.</li>
+        </ul>
+    </div>
+</div>
+
+<script>
+    let excelText = "";
+    let pdfText = "";
+    let isExcelReady = false;
+    let isPdfReady = false;
+    
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    // Helper function to write to our visual console
+    function logToConsole(message, statusText, statusClass) {
+        const ul = document.getElementById('systemLog');
+        const li = document.createElement('li');
+        const time = new Date().toLocaleTimeString();
+        li.innerHTML = `<span class="log-time">[${time}]</span> ${message} <span class="${statusClass}">[${statusText}]</span>`;
+        // Add to top of list
+        ul.insertBefore(li, ul.firstChild);
+    }
+
+    // 1. Excel Parsing
+    document.getElementById('excelFile').onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        document.getElementById('excelName').innerText = "Processing: " + file.name;
+        isExcelReady = false;
+        logToConsole(`Reading ${file.name}...`, "WAITING", "status-wait");
+        
+        try {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const data = new Uint8Array(event.target.result);
+                const wb = XLSX.read(data, {type: 'array'});
+                const ws = wb.Sheets[wb.SheetNames[0]];
+                excelText = XLSX.utils.sheet_to_txt(ws);
+                isExcelReady = true;
+                document.getElementById('excelName').innerText = "Ready: " + file.name;
+                logToConsole("Excel Data Extracted", "OK", "status-ok");
+            };
+            reader.readAsArrayBuffer(file);
+        } catch (err) {
+            logToConsole("Excel Extraction Failed", "ERROR", "status-error");
+        }
+    };
+
+    // 2. PDF Parsing
+    document.getElementById('pdfFile').onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        document.getElementById('pdfName').innerText = "Processing: " + file.name;
+        isPdfReady = false;
+        logToConsole(`Reading ${file.name}...`, "WAITING", "status-wait");
+        
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+            try {
+                const typedarray = new Uint8Array(event.target.result);
+                const pdf = await pdfjsLib.getDocument(typedarray).promise;
+                let text = "";
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const content = await page.getTextContent();
+                    text += content.items.map(item => item.str).join(" ");
+                }
+                pdfText = text;
+                isPdfReady = true;
+                document.getElementById('pdfName').innerText = "Ready: " + file.name;
+                logToConsole("PDF Text Extracted", "OK", "status-ok");
+            } catch (err) {
+                logToConsole(`PDF Error: ${err.message}`, "ERROR", "status-error");
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    };
+
+    // 3. AI Audit Logic
+    document.getElementById('runBtn').onclick = async () => {
+        const key = document.getElementById('apiKey').value.trim();
+        const outputDiv = document.getElementById('output');
+        
+        // Clear previous output
+        outputDiv.innerText = "";
+        
+        logToConsole("--- Starting Audit ---", "INFO", "status-ok");
+
+        if (!key) {
+            logToConsole("API Key Check", "FAILED", "status-error");
+            return alert("Please enter your API Key.");
+        }
+        if (!isExcelReady || !isPdfReady) {
+            logToConsole("File Check", "NOT READY", "status-error");
+            return alert("Files are missing or still being processed.");
+        }
+        
+        logToConsole("Pre-flight Checks", "PASSED", "status-ok");
+        logToConsole("Connecting to Google Servers...", "WAITING", "status-wait");
+
+        const prompt = `You are an expert scheduling auditor. 
+        Compare the Excel file to the Master PDF (Page 2).
+        
+        RULES:
+        1. PDF is the absolute Source of Truth.
+        2. Focus on components: GOOD TO KNOW, THINGS TO DO, SPA, MUSIC, and ENTERTAINMENT.
+        3. Match 24h Excel times (e.g. 16:00) to 12h PDF times (e.g. 4:00 pm).
+        4. Titles: Allow fuzzy matching (e.g. "Origami Class" matches "Arts & Crafts: Origami").
+        5. Venues: Allow synonyms (e.g. "Pool Deck" matches "Poolside").
+        6. Times: Must be an exact match.
+
+        Source of Truth (PDF): ${pdfText}
+        File to Audit (Excel): ${excelText}
+
+        Report in these sections:
+        1. MISSING OR EXTRA ACTIVITIES
+        2. TIME MISMATCHES
+        3. VENUE MISMATCHES
+        If perfectly matched, say: "The Excel file is a 100% match with the PDF."`;
+
+        try {
+            logToConsole("Sent to Google API", "YES", "status-ok");
+            
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${key}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    contents: [{ parts: [{ text: prompt }] }],
+                    generationConfig: { temperature: 0.1 }
+                })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                logToConsole("API Key / Request Valid", "NO", "status-error");
+                throw new Error(errorData.error?.message || "Unknown API Error");
+            }
+            
+            logToConsole("API Request Accepted", "YES", "status-ok");
+            logToConsole("Waiting for AI processing...", "WAITING", "status-wait");
+            
+            const result = await response.json();
+            
+           // --- TOKEN & COST TRACKING (GEMINI 3.0 FLASH) ---
+
+            // ----------------------------
+            // ----------------------------
+
+             // Original output logic
+            if (result.candidates && result.candidates[0].content.parts[0].text) {
+                document.getElementById('output').innerText = result.candidates[0].content.parts[0].text;
+                logToConsole("Audit Complete", "SUCCESS", "status-ok");
+            } else {
+                throw new Error("AI returned an empty response. Check safety filters.");
+            }
+
+        } catch (err) {
+            logToConsole("Audit Lifecycle Interrupted", "CRASHED", "status-error");
+            outputDiv.innerText = "Error: " + err.message;
+        }
+    };
+</script>
+
+</body>
+</html>
