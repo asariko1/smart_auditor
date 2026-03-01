@@ -44,4 +44,6 @@ This application is built with a **Privacy-First** architecture:
 ---
 
 Licensed under Polyform Noncommercial License 1.0. Commercial use, including use for business labor reduction, is strictly prohibited.
+
 © 2026 Asariko.net
+
