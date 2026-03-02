@@ -7,7 +7,7 @@
 ## Key Features
 
 * **PDF Logic Processing**: Treats the PDF as the absolute source of truth for the audit.
-* **Fuzzy Venue & Title Matching**: Intelligent logic that recognizes synonyms (e.g., "Chapel" = "Skylight Chapel") and ignores trademark symbols (®, ™).
+* **Fuzzy Venue & Title Matching**: Intelligent logic that recognizes synonyms (e.g., "Pooldeck" = "Poolside") and ignores trademark symbols (®, ™).
 * **Real-Time System Console**: A 6-stage lifecycle log that flows from **Top to Bottom**, allowing you to track the audit as it happens.
 * **Live Token & Cost Tracking**: Calculates the exact number of input/output tokens used and provides a live USD cost estimate for every audit.
 
@@ -20,7 +20,7 @@ The tool is hosted and accessible at:
 
 1.  **API Key**: Enter your Gemini API Key (obtainable from [Google AI Studio](https://aistudio.google.com/)).
 2.  **Upload Excel**: Select your draft schedule (.xlsx or .csv).
-3.  **Upload PDF**: Select the Master PDF document.
+3.  **Upload PDF**: Select the Master PDF document. Upload only 1 page which contains Daily Planner
 4.  **Run Audit**: Click "Run Audit" and watch the console progress through Stages 1 to 6.
 
 ## Security & Data Privacy
@@ -46,4 +46,5 @@ This application is built with a **Privacy-First** architecture:
 Licensed under Polyform Noncommercial License 1.0. Commercial use, including use for business labor reduction, is strictly prohibited.
 
 © 2026 Asariko.net
+
 
