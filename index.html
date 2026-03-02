@@ -180,8 +180,8 @@
         1. PDF is the absolute Source of Truth.
         2. Focus on components: GOOD TO KNOW, THINGS TO DO, SPA, MUSIC, and ENTERTAINMENT.
         3. Match 24h Excel times (e.g. 16:00) to 12h PDF times (e.g. 4:00 pm).
-        4. Titles: Allow fuzzy matching (e.g. "Origami Class" matches "Arts & Crafts: Origami").
-        5. Venues: Allow synonyms (e.g. "Pool Deck" matches "Poolside").
+        4. Titles: Allow fuzzy matching (e.g. "Origami Class" matches "Arts & Crafts: Origami" or "Adult Volleyball Competition" matches "Volleyball Competition: Adults (18+)").
+        5. Venues: Allow synonyms (e.g. "Pool Deck" matches "Poolside" or "Photo Gallery" matches "Focus Photo Gallery").
         6. Times: Must be an exact match.
 
         Source of Truth (PDF): ${pdfText}
@@ -191,6 +191,7 @@
         1. MISSING OR EXTRA ACTIVITIES
         2. TIME MISMATCHES
         3. VENUE MISMATCHES
+		4. DUBLICATES
         If perfectly matched, say: "The Excel file is a 100% match with the PDF."`;
 
         try {
@@ -247,4 +248,5 @@
 </body>
 
 </html>
+
 
