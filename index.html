@@ -46,7 +46,7 @@
 <div class="app-container">
     <div class="main-panel">
         <h2>Smart AEM Auditor</h2>
-        <p>Compare Day View against the Compass PDF (V1.0).</p>
+        <p>Compare Day View against the Compass PDF (V1.1).</p>
 
         <div class="input-group">
             <label>Gemini API Key</label>
@@ -54,18 +54,28 @@
         </div>
         
         <div class="drop-zone" onclick="document.getElementById('excelFile').click()">
-            <strong>1. Upload Excel/CSV File</strong>
+            <strong>1. Upload AEM Excel/CSV File</strong>
             <input type="file" id="excelFile" hidden accept=".xlsx, .csv">
             <div id="excelName" class="file-name">No file selected</div>
         </div>
 
         <div class="drop-zone" onclick="document.getElementById('pdfFile').click()">
-            <strong>2. Upload Master PDF (.pdf)</strong>
+            <strong>2. Upload Compass PDF (.pdf)</strong>
             <input type="file" id="pdfFile" hidden accept=".pdf">
             <div id="pdfName" class="file-name">No file selected</div>
         </div>
 
+        <div class="drop-zone" onclick="document.getElementById('masterExcelFile').click()">
+            <strong>OR: Upload Grid Excel for Icon Class (.xlsx, .csv)</strong>
+            <input type="file" id="masterExcelFile" hidden accept=".xlsx, .csv">
+            <div id="masterExcelName" class="file-name">No file selected</div>
+        </div>
+
         <button id="runBtn">Run Audit</button>
+
+	  
+
+        
 
         <div id="output">Results will appear here...</div>
     </div>
@@ -81,9 +91,11 @@
 <script>
     let excelText = "";
     let pdfText = "";
+    let masterExcelText = "";
     let isExcelReady = false;
     let isPdfReady = false;
-    
+    let isMasterExcelReady = false;
+
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
     // Helper function to write to our visual console
@@ -151,8 +163,41 @@
         reader.readAsArrayBuffer(file);
     };
 
+    // 2b. Master Excel Parsing
+    document.getElementById('masterExcelFile').onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        document.getElementById('masterExcelName').innerText = "Processing: " + file.name;
+        isMasterExcelReady = false;
+        logToConsole(`Reading ${file.name}...`, "WAITING", "status-wait");
+        try {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const data = new Uint8Array(event.target.result);
+                const wb = XLSX.read(data, {type: 'array'});
+                const ws = wb.Sheets[wb.SheetNames[0]];
+                masterExcelText = XLSX.utils.sheet_to_txt(ws);
+                isMasterExcelReady = true;
+                document.getElementById('masterExcelName').innerText = "Ready: " + file.name;
+                logToConsole("Master Excel Extracted", "OK", "status-ok");
+            };
+            reader.readAsArrayBuffer(file);
+        } catch (err) {
+            logToConsole("Master Excel Extraction Failed", "ERROR", "status-error");
+        }
+    };
+
     // 3. AI Audit Logic
     document.getElementById('runBtn').onclick = async () => {
+        const runBtn = document.getElementById('runBtn');
+        
+        // --- BUTTON PROTECTION START ---
+        runBtn.disabled = true;
+        runBtn.innerText = "Audit in Progress...";
+        runBtn.style.background = "#6c757d"; // Gray background
+        runBtn.style.cursor = "not-allowed";
+        // --- BUTTON PROTECTION END ---
+
         const key = document.getElementById('apiKey').value.trim();
         const outputDiv = document.getElementById('output');
         
@@ -163,28 +208,40 @@
 
         if (!key) {
             logToConsole("API Key Check", "FAILED", "status-error");
+            runBtn.disabled = false;
+            runBtn.innerText = "Run Audit";
+            runBtn.style.background = "#007bff";
+            runBtn.style.cursor = "pointer";
             return alert("Please enter your API Key.");
         }
-        if (!isExcelReady || !isPdfReady) {
+        if (!isExcelReady || (!isPdfReady && !isMasterExcelReady)) {
             logToConsole("File Check", "NOT READY", "status-error");
-            return alert("Files are missing or still being processed.");
+            runBtn.disabled = false;
+            runBtn.innerText = "Run Audit";
+            runBtn.style.background = "#007bff";
+            runBtn.style.cursor = "pointer";
+            return alert("Please ensure you have uploaded the File to Audit (1) AND a Master File (2 or OR).");
         }
         
         logToConsole("Pre-flight Checks", "PASSED", "status-ok");
         logToConsole("Connecting to Google Servers...", "WAITING", "status-wait");
 
-        const prompt = `You are an expert scheduling auditor. 
-        Compare the Excel file to the Master PDF (Page 2).
-        
+	  // --- Master PDF and Master Excel is a variable now ---
+
+        const masterTruthText = isMasterExcelReady ? masterExcelText : pdfText;
+        const masterTypeName = isMasterExcelReady ? "Master Excel" : "Master PDF";
+
+        const prompt = `You are an expert scheduling auditor.
+        Compare the File to Audit (Excel) to the ${masterTypeName}.
         RULES:
-        1. PDF is the absolute Source of Truth.
+        1. ${masterTypeName} is the absolute Source of Truth.
         2. Focus on components: GOOD TO KNOW, THINGS TO DO, SPA, MUSIC, and ENTERTAINMENT.
-        3. Match 24h Excel times (e.g. 16:00) to 12h PDF times (e.g. 4:00 pm).
+        3. Match 24h Excel times (e.g. 16:00) to 12h Master times (e.g. 4:00 pm).
         4. Titles: Allow fuzzy matching (e.g. "Origami Class" matches "Arts & Crafts: Origami" or "Adult Volleyball Competition" matches "Volleyball Competition: Adults (18+)").
         5. Venues: Allow synonyms (e.g. "Pool Deck" matches "Poolside" or "Photo Gallery" matches "Focus Photo Gallery").
         6. Times: Must be an exact match.
 
-        Source of Truth (PDF): ${pdfText}
+        Source of Truth (${masterTypeName}): ${masterTruthText}
         File to Audit (Excel): ${excelText}
 
         Report in these sections:
@@ -192,7 +249,7 @@
         2. TIME MISMATCHES
         3. VENUE MISMATCHES
 		4. DUBLICATES
-        If perfectly matched, say: "The Excel file is a 100% match with the PDF."`;
+        If perfectly matched, say: "The Excel file is a 100% match with the ${masterTypeName}."`;
 
         try {
             logToConsole("Sent to Google API", "YES", "status-ok");
@@ -217,7 +274,7 @@
             
             const result = await response.json();
             
-           // --- TOKEN & COST TRACKING (GEMINI 3.0 FLASH) ---
+           // --- T..... & C....  (GEMINI 3.0 FLASH) ---
 
             // ----------------------------
             // ----------------------------
@@ -233,6 +290,13 @@
         } catch (err) {
             logToConsole("Audit Lifecycle Interrupted", "CRASHED", "status-error");
             outputDiv.innerText = "Error: " + err.message;
+        } finally {
+            // --- RESTORE BUTTON STATE ---
+            // This ensures the button unlocks whether the process succeeds or fails
+            runBtn.disabled = false;
+            runBtn.innerText = "Run Audit";
+            runBtn.style.background = "#007bff"; 
+            runBtn.style.cursor = "pointer";
         }
     };
 </script>
