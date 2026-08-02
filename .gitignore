@@ -1,0 +1,25 @@
+# Claude local files
+.claude/
+
+# Local test files
+hello_test.html
+pdf_crop.html
+index_maintanance.html
+index_V1.txt
+index_V4.txt
+index1_3.html
+indexV1_2button secured.txt
+indexV1_3Excel box added.txt
+
+# macOS
+.DS_Store
+
+# VS Code (optional)
+.vscode/
+
+# Logs
+*.log
+
+# Environment files
+.env
+.env.*
