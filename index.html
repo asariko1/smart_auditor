@@ -166,16 +166,49 @@
             position: sticky;
             top: 112px; /* clears the fixed navbar */
         }
-        .console-panel h3 {
-            margin-top: 0;
-            color: #5eead4;
+        .console-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
             border-bottom: 1px solid #1e293b;
             padding-bottom: 12px;
+            margin-bottom: 12px;
+        }
+        .console-header h3 {
+            margin: 0;
+            color: #5eead4;
             font-size: 14px;
             font-weight: 600;
             letter-spacing: 0.04em;
             text-transform: uppercase;
         }
+        .console-toggle {
+            background: none;
+            border: none;
+            color: #5eead4;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: background-color 0.15s ease;
+        }
+        .console-toggle:hover { background-color: rgba(255, 255, 255, 0.08); }
+        .console-toggle-label {
+            font-size: 11px;
+            font-weight: 500;
+            color: #94a3b8;
+            text-transform: none;
+            letter-spacing: normal;
+        }
+        .console-toggle svg {
+            width: 16px;
+            height: 16px;
+            transition: transform 0.25s ease;
+        }
+        /* Chevron points up when expanded, down when collapsed */
+        .console-panel.collapsed .console-toggle svg { transform: rotate(-90deg); }
 
         #systemLog { list-style: none; padding: 0; margin: 0; font-size: 12.5px; line-height: 1.55; }
         #systemLog li {
@@ -184,6 +217,15 @@
             border-bottom: 1px dashed #1e293b;
         }
         #systemLog li:last-child { border-bottom: none; }
+
+        /* Collapsed: only the newest entry (always first, since new logs are
+           inserted at the top) stays visible. */
+        .console-panel.collapsed #systemLog li:not(:first-child) { display: none; }
+        .console-panel.collapsed #systemLog li:first-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
 
         .log-time { color: #64748b; font-size: 11px; margin-right: 5px; }
         .status-ok { color: #4ade80; font-weight: 600; }
@@ -279,8 +321,14 @@
                     <div id="output">Results will appear here...</div>
                 </div>
 
-                <div class="console-panel">
-                    <h3>System Console</h3>
+                <div class="console-panel" id="consolePanel">
+                    <div class="console-header">
+                        <h3>System Console</h3>
+                        <button id="consoleToggleBtn" class="console-toggle" type="button" aria-expanded="true" aria-label="Collapse console">
+                            <span id="consoleToggleLabel" class="console-toggle-label">Click to Collapse</span>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                        </button>
+                    </div>
                     <ul id="systemLog">
                         <li><span class="log-time">System</span> Ready for input.</li>
                     </ul>
@@ -500,6 +548,17 @@
             runBtn.style.cursor = "pointer";
         }
     };
+
+    // CONSOLE COLLAPSE TOGGLE
+    const consolePanel = document.getElementById('consolePanel');
+    const consoleToggleBtn = document.getElementById('consoleToggleBtn');
+    const consoleToggleLabel = document.getElementById('consoleToggleLabel');
+    consoleToggleBtn.addEventListener('click', () => {
+        const collapsed = consolePanel.classList.toggle('collapsed');
+        consoleToggleBtn.setAttribute('aria-expanded', String(!collapsed));
+        consoleToggleBtn.setAttribute('aria-label', collapsed ? 'Expand console' : 'Collapse console');
+        consoleToggleLabel.textContent = collapsed ? 'Click to Expand' : 'Click to Collapse';
+    });
 </script>
 
     <footer class="py-8 text-slate-400 text-sm border-t border-slate-100 mt-12">
