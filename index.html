@@ -155,16 +155,24 @@
         }
 
         /* System Console Panel — kept dark on purpose, softened to slate */
-        .console-panel {
+        /* Holds the console + the Copy Deck lookup panel, stacked, so the
+           pair scrolls as one sticky unit next to the main panel. */
+        .side-column {
             flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            position: sticky;
+            top: 112px; /* clears the fixed navbar */
+        }
+
+        .console-panel {
             background: #0f172a;
             color: #cbd5e1;
             padding: 22px;
             border-radius: 24px;
             box-shadow: 0 8px 30px rgb(0 0 0 / 0.18);
             font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-            position: sticky;
-            top: 112px; /* clears the fixed navbar */
         }
         .console-header {
             display: flex;
@@ -233,10 +241,129 @@
         .status-wait { color: #fbbf24; font-weight: 600; }
         .token-count { color: #38bdf8; font-weight: 600; border-bottom: 1px solid #38bdf8; padding-bottom: 2px; }
 
+        /* --- Copy Deck Lookup panel ---
+           Local, client-side search only. Nothing here is ever sent to Gemini
+           or touches the audit's fetch call — it's a self-contained feature
+           for cross-checking an AEM ID while reading the report above. */
+        .deck-panel {
+            background: #ffffff;
+            padding: 20px;
+            border: 1px solid #f1f5f9;
+            border-radius: 24px;
+            box-shadow: 0 8px 30px rgb(0 0 0 / 0.04);
+        }
+        .deck-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .deck-header h3 {
+            margin: 0;
+            color: #2c3e50;
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+        }
+        .deck-badge {
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: #16a34a;
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            padding: 3px 8px;
+            border-radius: 999px;
+        }
+        .deck-hint {
+            font-size: 12px;
+            color: #64748b;
+            line-height: 1.5;
+            margin: 0 0 14px;
+        }
+        .deck-upload {
+            border: 2px dashed #cbd5e1;
+            border-radius: 10px;
+            padding: 14px;
+            text-align: center;
+            cursor: pointer;
+            font-size: 12.5px;
+            font-weight: 600;
+            color: #2c3e50;
+            background: #f8fafc;
+            transition: background-color 0.2s ease, border-color 0.2s ease;
+        }
+        .deck-upload:hover { background: #f1f5f9; border-color: #94a3b8; }
+        .deck-status { font-size: 11.5px; color: #64748b; margin: 8px 0 12px; }
+        #deckSearchInput { margin-bottom: 12px; }
+        #deckSearchInput:disabled { background: #f8fafc; color: #94a3b8; cursor: not-allowed; }
+
+        .deck-table-wrap {
+            max-height: 280px;
+            overflow-y: auto;
+            overflow-x: auto;
+            border: 1px solid #f1f5f9;
+            border-radius: 10px;
+        }
+        .deck-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+        .deck-table thead th {
+            background: #2c3e50;
+            color: #ffffff;
+            padding: 8px 10px;
+            text-align: left;
+            font-weight: 500;
+            white-space: nowrap;
+            position: sticky;
+            top: 0;
+        }
+        .deck-table td {
+            padding: 8px 10px;
+            border-bottom: 1px solid #f1f5f9;
+            color: #475569;
+            vertical-align: top;
+        }
+        .deck-table td strong { color: #0f172a; font-weight: 600; }
+        .deck-table tbody tr:hover { background-color: #f8fafc; }
+        .deck-table td:nth-child(2) { white-space: nowrap; }
+
+        /* The page-wide `button` rule sets width:100% and !important backgrounds
+           for the big Run Audit button — these overrides keep the small copy
+           buttons their own size and color without touching that rule. */
+        .deck-copy-btn {
+            width: auto;
+            margin: 0;
+            padding: 3px 7px;
+            background: #ffffff !important;
+            border: 1px solid #cbd5e1;
+            color: #2c3e50;
+            font-size: 10.5px;
+            font-weight: 600;
+            font-family: inherit;
+            border-radius: 6px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .deck-copy-btn:hover {
+            background-color: #2c3e50 !important;
+            color: #ffffff;
+            transform: none;
+            box-shadow: none;
+        }
+        .deck-copy-btn.copied,
+        .deck-copy-btn.copied:hover {
+            background-color: #16a34a !important;
+            color: #ffffff;
+            border-color: #16a34a;
+        }
+
         /* Mobile responsiveness */
         @media (max-width: 900px) {
             .app-container { flex-direction: column; }
-            .console-panel { width: 100%; box-sizing: border-box; position: static; }
+            .side-column { width: 100%; box-sizing: border-box; position: static; }
+            .console-panel { width: 100%; box-sizing: border-box; }
             .main-panel { padding: 24px; }
         }
     </style>
@@ -321,17 +448,45 @@
                     <div id="output">Results will appear here...</div>
                 </div>
 
-                <div class="console-panel" id="consolePanel">
-                    <div class="console-header">
-                        <h3>System Console</h3>
-                        <button id="consoleToggleBtn" class="console-toggle" type="button" aria-expanded="true" aria-label="Collapse console">
-                            <span id="consoleToggleLabel" class="console-toggle-label">Click to Collapse</span>
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-                        </button>
+                <div class="side-column">
+                    <div class="console-panel" id="consolePanel">
+                        <div class="console-header">
+                            <h3>System Console</h3>
+                            <button id="consoleToggleBtn" class="console-toggle" type="button" aria-expanded="true" aria-label="Collapse console">
+                                <span id="consoleToggleLabel" class="console-toggle-label">Click to Collapse</span>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                            </button>
+                        </div>
+                        <ul id="systemLog">
+                            <li><span class="log-time">System</span> Ready for input.</li>
+                        </ul>
                     </div>
-                    <ul id="systemLog">
-                        <li><span class="log-time">System</span> Ready for input.</li>
-                    </ul>
+
+                    <!-- Copy Deck Lookup: local search only, never sent to Gemini -->
+                    <div class="deck-panel" id="deckPanel">
+                        <div class="deck-header">
+                            <h3>Copy Deck Lookup</h3>
+                            <span class="deck-badge">Local only</span>
+                        </div>
+                        <p class="deck-hint">Load your Copy Deck export to find an AEM ID while reviewing the report above. This search runs entirely in your browser — nothing here is sent to Gemini.</p>
+
+                        <div class="deck-upload" onclick="document.getElementById('deckFilePicker').click()">
+                            Load Copy Deck file (.xlsx / .csv)
+                            <input type="file" id="deckFilePicker" hidden accept=".xlsx, .xls, .csv">
+                        </div>
+                        <div id="deckStatus" class="deck-status">No file loaded yet.</div>
+
+                        <input type="text" id="deckSearchInput" placeholder="Search Copy Deck Title..." disabled>
+
+                        <div class="deck-table-wrap">
+                            <table class="deck-table">
+                                <thead>
+                                    <tr><th>Title</th><th>AEM ID</th><th>Venue</th></tr>
+                                </thead>
+                                <tbody id="deckTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
@@ -559,6 +714,88 @@
         consoleToggleBtn.setAttribute('aria-label', collapsed ? 'Expand console' : 'Collapse console');
         consoleToggleLabel.textContent = collapsed ? 'Click to Expand' : 'Click to Collapse';
     });
+
+    // ==========================================================
+    // COPY DECK LOOKUP — entirely local, isolated from the audit.
+    // Same search logic as the standalone Copy Deck Finder tool.
+    // This data is never read by the Gemini fetch call above.
+    // ==========================================================
+    let deckMasterData = [];
+
+    const DECK_ICON_COPY = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg><span>Copy</span>';
+    const DECK_ICON_CHECK = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>Copied</span>';
+
+    const deckFilePicker = document.getElementById('deckFilePicker');
+    const deckSearchInput = document.getElementById('deckSearchInput');
+    const deckStatus = document.getElementById('deckStatus');
+    const deckTableBody = document.getElementById('deckTableBody');
+
+    deckFilePicker.addEventListener('change', function (e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+
+        deckStatus.innerText = 'Processing rows... please wait.';
+
+        reader.onload = function (event) {
+            const data = new Uint8Array(event.target.result);
+            const workbook = XLSX.read(data, { type: 'array', raw: true });
+            const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+
+            // raw: false keeps long AEM IDs as exact text instead of scientific notation
+            deckMasterData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", raw: false });
+            deckMasterData.shift(); // drop the header row
+
+            deckStatus.innerText = '✓ Loaded ' + deckMasterData.length + ' rows. Ready to search.';
+            deckSearchInput.disabled = false;
+        };
+        reader.readAsArrayBuffer(file);
+    });
+
+    deckSearchInput.addEventListener('keyup', function () {
+        const query = this.value.toLowerCase();
+        const terms = query.split(' ').filter(t => t !== "");
+
+        const matches = deckMasterData.filter(row => {
+            if (!row || row.length === 0) return false;
+            const columnA = String(row[0] || "").toLowerCase();
+            return terms.every(term => columnA.includes(term));
+        });
+
+        const results = matches.slice(0, 100);
+
+        deckTableBody.innerHTML = results.map(row => {
+            const aemId = row[1] || '';
+            const copyBtnHtml = aemId ? `<button class="deck-copy-btn" data-id="${aemId}" onclick="copyDeckID(this)" title="Copy ID">${DECK_ICON_COPY}</button>` : '';
+
+            return `
+                <tr>
+                    <td><strong>${row[0] || ''}</strong></td>
+                    <td>${aemId} ${copyBtnHtml}</td>
+                    <td>${row[2] || ''}</td>
+                </tr>
+            `;
+        }).join('');
+
+        if (query !== "") {
+            deckStatus.innerText = 'Found ' + matches.length + ' matches.';
+        } else {
+            deckStatus.innerText = '✓ ' + deckMasterData.length + ' rows loaded. Ready to search.';
+            deckTableBody.innerHTML = "";
+        }
+    });
+
+    function copyDeckID(buttonElement) {
+        const idToCopy = buttonElement.getAttribute('data-id');
+        navigator.clipboard.writeText(idToCopy).then(() => {
+            buttonElement.innerHTML = DECK_ICON_CHECK;
+            buttonElement.classList.add('copied');
+            setTimeout(() => {
+                buttonElement.innerHTML = DECK_ICON_COPY;
+                buttonElement.classList.remove('copied');
+            }, 1500);
+        });
+    }
 </script>
 
     <footer class="py-8 text-slate-400 text-sm border-t border-slate-100 mt-12">
