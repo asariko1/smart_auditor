@@ -285,14 +285,15 @@
             font-weight: 600;
             letter-spacing: 0.02em;
         }
+        /* Local Only badge in the Copy Deck Lookup */
         .deck-badge {
             font-size: 10px;
             font-weight: 600;
             letter-spacing: 0.04em;
             text-transform: uppercase;
-            color: #16a34a;
-            background: #f0fdf4;
-            border: 1px solid #bbf7d0;
+            color: #64748b;
+            background: #f1f5f9;
+            border: 1px solid #e2e8f0;
             padding: 3px 8px;
             border-radius: 999px;
         }
@@ -465,9 +466,9 @@
 
                     <button id="runBtn">Run Audit</button>
 
-                    <div id="output">Results will appear here...</div>
-
                     <button id="exportPdfBtn" disabled>Export Report as PDF</button>
+
+                    <div id="output">Results will appear here...</div>
                 </div>
 
                 <div class="side-column">
@@ -490,7 +491,7 @@
                             <h3>Copy Deck Lookup</h3>
                             <span class="deck-badge">Local only</span>
                         </div>
-                        <p class="deck-hint">Load your Copy Deck export to find an AEM ID while reviewing the report above. This search runs entirely in your browser — nothing here is sent to Gemini.</p>
+                        <p class="deck-hint">Load your Copy Deck export to find an AEM ID while reviewing the report above. File format: 3 columns. Header as: Activity Name - AEM ID - Venue or Alternative ID (Your Choice). This search runs entirely in your browser — nothing here is sent to Gemini.</p>
 
                         <div class="deck-upload" onclick="document.getElementById('deckFilePicker').click()">
                             Load Copy Deck file (.xlsx / .csv)
