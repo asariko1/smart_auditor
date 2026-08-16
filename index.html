@@ -432,7 +432,7 @@
             <div class="max-w-3xl">
                 <h1 class="text-4xl md:text-5xl font-bold tracking-tight text-slate-900 mb-4">Smart AEM Auditor</h1>
                 <p class="text-xl text-slate-400 font-light">
-                    Compare AEM Day View against the Compass PDF or TESS Report (V1.3).
+                    Compare AEM Day View against the Compass PDF or TESS Report (V1.4).
                 </p>
             </div>
         </section>
@@ -491,7 +491,7 @@
                             <h3>Copy Deck Lookup</h3>
                             <span class="deck-badge">Local only</span>
                         </div>
-                        <p class="deck-hint">Load your Copy Deck export to find an AEM ID while reviewing the report above. File format: 3 columns. Header as: Activity Name - AEM ID - Venue or Alternative ID (Your Choice). This search runs entirely in your browser — nothing here is sent to Gemini.</p>
+                        <p class="deck-hint">Load your Copy Deck export to find an AEM ID while reviewing the report above. File format: 3 columns. Header as: Activity Name - AEM ID - Venue or Alternative ID (Your Choice). This search runs entirely in your browser, it's optional to use.</p>
 
                         <div class="deck-upload" onclick="document.getElementById('deckFilePicker').click()">
                             Load Copy Deck file (.xlsx / .csv)
@@ -672,6 +672,7 @@
         logToConsole("Connecting to Google Servers...", "WAITING", "status-wait");
 
 	  // --- Master PDF and Master Excel is a variable now ---
+      
 
         const masterTruthText = isMasterExcelReady ? masterExcelText : pdfText;
         const masterTypeName = isMasterExcelReady ? "Master Excel" : "Master PDF";
@@ -682,10 +683,15 @@
         1. ${masterTypeName} is the absolute Source of Truth.
         2. If PDF uploaded: Focus on components: GOOD TO KNOW, THINGS TO DO, SPA, MUSIC, and ENTERTAINMENT.
         3. Match 24h Excel times (e.g. 16:00) to 12h Master times (e.g. 4:00 pm).
-        4. Titles: Allow fuzzy matching (e.g. "Main Dining Room 5" matches "Main Dining Room" or "Origami Class" matches "Arts & Crafts: Origami" or "Adult Volleyball Competition" matches "Volleyball Competition: Adults (18+)").
+        4. Titles: Two titles may be treated as the same activity ONLY if they describe the
+            identical event — same subject, same person, performer, host, or band, and the same type of activity — just worded, ordered, or formatted differently
+            (e.g. "Adult Volleyball Competition" matches "Volleyball Competition: Adults (18+)").
+            If ANY specific identifying detail differs — a different person's name, a different
+            band, a different genre, a different theme, a different type of event — the titles
+            do NOT match, even if the time and venue are identical. Report these under TITLE / CONTENT MISMATCHES.
         5. Venues: Allow synonyms (e.g. "Pool Deck" matches "Poolside" or "Photo Gallery" matches "Focus Photo Gallery").
         6. Times: Must be an exact match.
-
+        
         Source of Truth (${masterTypeName}): ${masterTruthText}
         File to AEM Audit (Excel): ${excelText}
 
@@ -693,7 +699,9 @@
         1. MISSING OR EXTRA ACTIVITIES
         2. TIME MISMATCHES
         3. VENUE MISMATCHES (Add time for referance)
-	4. DUBLICATES
+        4. TITLE / CONTENT MISMATCHES (Add time/venue for referance)
+	    5. DUBLICATES
+        
         If perfectly matched, say: "The AEM Export file is a 100% match with the ${masterTypeName}."`;
 
         try {
