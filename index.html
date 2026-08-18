@@ -25,6 +25,7 @@
     <!-- Libraries (unchanged) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
     <!-- Custom CSS -->
     <link rel="stylesheet" href="style.css">
@@ -49,9 +50,9 @@
             align-items: flex-start;
         }
 
-        /* Main Audit Tool Panel */
+        /* Main Audit Tool Panel (line 55-181 flex ratio is right left ratio). */
         .main-panel {
-            flex: 2;
+            flex: 3;
             background: #ffffff;
             padding: 32px;
             border: 1px solid #f1f5f9;
@@ -154,28 +155,88 @@
             color: #475569;
         }
 
+        /* Secondary action — outlined, so it doesn't compete with Run Audit.
+           Higher-specificity ID selector + !important beats the page-wide
+           `button` rule's solid teal background without touching that rule. */
+        #exportPdfBtn {
+            margin-top: 14px;
+            background: #ffffff !important;
+            color: #2c3e50;
+            border: 1px solid #cbd5e1;
+        }
+        #exportPdfBtn:hover:not(:disabled) {
+            background-color: #f8fafc !important;
+            box-shadow: 0 6px 18px rgba(44, 62, 80, 0.08);
+        }
+        #exportPdfBtn:disabled {
+            background-color: #ffffff !important;
+            color: #cbd5e1;
+            border-color: #e2e8f0;
+        }
+
         /* System Console Panel — kept dark on purpose, softened to slate */
+        /* Holds the console + the Copy Deck lookup panel, stacked, so the
+           pair scrolls as one sticky unit next to the main panel.(line 55-181 flex ratio is right left ratio)*/
+        .side-column {
+            flex: 2;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            position: sticky;
+            top: 112px; /* clears the fixed navbar */
+        }
+
         .console-panel {
-            flex: 1;
             background: #0f172a;
             color: #cbd5e1;
             padding: 22px;
             border-radius: 24px;
             box-shadow: 0 8px 30px rgb(0 0 0 / 0.18);
             font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-            position: sticky;
-            top: 112px; /* clears the fixed navbar */
         }
-        .console-panel h3 {
-            margin-top: 0;
-            color: #5eead4;
+        .console-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
             border-bottom: 1px solid #1e293b;
             padding-bottom: 12px;
+            margin-bottom: 12px;
+        }
+        .console-header h3 {
+            margin: 0;
+            color: #5eead4;
             font-size: 14px;
             font-weight: 600;
             letter-spacing: 0.04em;
             text-transform: uppercase;
         }
+        .console-toggle {
+            background: none;
+            border: none;
+            color: #5eead4;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: background-color 0.15s ease;
+        }
+        .console-toggle:hover { background-color: rgba(255, 255, 255, 0.08); }
+        .console-toggle-label {
+            font-size: 11px;
+            font-weight: 500;
+            color: #94a3b8;
+            text-transform: none;
+            letter-spacing: normal;
+        }
+        .console-toggle svg {
+            width: 16px;
+            height: 16px;
+            transition: transform 0.25s ease;
+        }
+        /* Chevron points up when expanded, down when collapsed */
+        .console-panel.collapsed .console-toggle svg { transform: rotate(-90deg); }
 
         #systemLog { list-style: none; padding: 0; margin: 0; font-size: 12.5px; line-height: 1.55; }
         #systemLog li {
@@ -185,16 +246,145 @@
         }
         #systemLog li:last-child { border-bottom: none; }
 
+        /* Collapsed: only the newest entry (always first, since new logs are
+           inserted at the top) stays visible. */
+        .console-panel.collapsed #systemLog li:not(:first-child) { display: none; }
+        .console-panel.collapsed #systemLog li:first-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+
         .log-time { color: #64748b; font-size: 11px; margin-right: 5px; }
         .status-ok { color: #4ade80; font-weight: 600; }
         .status-error { color: #f87171; font-weight: 600; }
         .status-wait { color: #fbbf24; font-weight: 600; }
         .token-count { color: #38bdf8; font-weight: 600; border-bottom: 1px solid #38bdf8; padding-bottom: 2px; }
 
+        /* --- Copy Deck Lookup panel ---
+           Local, client-side search only. Nothing here is ever sent to Gemini
+           or touches the audit's fetch call — it's a self-contained feature
+           for cross-checking an AEM ID while reading the report above. */
+        .deck-panel {
+            background: #ffffff;
+            padding: 20px;
+            border: 1px solid #f1f5f9;
+            border-radius: 24px;
+            box-shadow: 0 8px 30px rgb(0 0 0 / 0.04);
+        }
+        .deck-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .deck-header h3 {
+            margin: 0;
+            color: #2c3e50;
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+        }
+        /* Local Only badge in the Copy Deck Lookup */
+        .deck-badge {
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: #64748b;
+            background: #f1f5f9;
+            border: 1px solid #e2e8f0;
+            padding: 3px 8px;
+            border-radius: 999px;
+        }
+        .deck-hint {
+            font-size: 12px;
+            color: #64748b;
+            line-height: 1.5;
+            margin: 0 0 14px;
+        }
+        .deck-upload {
+            border: 2px dashed #cbd5e1;
+            border-radius: 10px;
+            padding: 14px;
+            text-align: center;
+            cursor: pointer;
+            font-size: 12.5px;
+            font-weight: 600;
+            color: #2c3e50;
+            background: #f8fafc;
+            transition: background-color 0.2s ease, border-color 0.2s ease;
+        }
+        .deck-upload:hover { background: #f1f5f9; border-color: #94a3b8; }
+        .deck-status { font-size: 11.5px; color: #64748b; margin: 8px 0 12px; }
+        #deckSearchInput { margin-bottom: 12px; }
+        #deckSearchInput:disabled { background: #f8fafc; color: #94a3b8; cursor: not-allowed; }
+
+        .deck-table-wrap {
+            max-height: 280px;
+            overflow-y: auto;
+            overflow-x: auto;
+            border: 1px solid #f1f5f9;
+            border-radius: 10px;
+        }
+        .deck-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+        .deck-table thead th {
+            background: #2c3e50;
+            color: #ffffff;
+            padding: 8px 10px;
+            text-align: left;
+            font-weight: 500;
+            white-space: nowrap;
+            position: sticky;
+            top: 0;
+        }
+        .deck-table td {
+            padding: 8px 10px;
+            border-bottom: 1px solid #f1f5f9;
+            color: #475569;
+            vertical-align: top;
+        }
+        .deck-table td strong { color: #0f172a; font-weight: 600; }
+        .deck-table tbody tr:hover { background-color: #f8fafc; }
+        .deck-table td:nth-child(2) { white-space: nowrap; }
+
+        /* The page-wide `button` rule sets width:100% and !important backgrounds
+           for the big Run Audit button — these overrides keep the small copy
+           buttons their own size and color without touching that rule. */
+        .deck-copy-btn {
+            width: auto;
+            margin: 0;
+            padding: 3px 7px;
+            background: #ffffff !important;
+            border: 1px solid #cbd5e1;
+            color: #2c3e50;
+            font-size: 10.5px;
+            font-weight: 600;
+            font-family: inherit;
+            border-radius: 6px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .deck-copy-btn:hover {
+            background-color: #2c3e50 !important;
+            color: #ffffff;
+            transform: none;
+            box-shadow: none;
+        }
+        .deck-copy-btn.copied,
+        .deck-copy-btn.copied:hover {
+            background-color: #16a34a !important;
+            color: #ffffff;
+            border-color: #16a34a;
+        }
+
         /* Mobile responsiveness */
         @media (max-width: 900px) {
             .app-container { flex-direction: column; }
-            .console-panel { width: 100%; box-sizing: border-box; position: static; }
+            .side-column { width: 100%; box-sizing: border-box; position: static; }
+            .console-panel { width: 100%; box-sizing: border-box; }
             .main-panel { padding: 24px; }
         }
     </style>
@@ -242,7 +432,7 @@
             <div class="max-w-3xl">
                 <h1 class="text-4xl md:text-5xl font-bold tracking-tight text-slate-900 mb-4">Smart AEM Auditor</h1>
                 <p class="text-xl text-slate-400 font-light">
-                    Compare AEM Day View against the Compass PDF or TESS Report (V1.3).
+                    Compare AEM Day View against the Compass PDF or TESS Report (V1.4).
                 </p>
             </div>
         </section>
@@ -276,14 +466,50 @@
 
                     <button id="runBtn">Run Audit</button>
 
+                    <button id="exportPdfBtn" disabled>Export Report as PDF</button>
+
                     <div id="output">Results will appear here...</div>
                 </div>
 
-                <div class="console-panel">
-                    <h3>System Console</h3>
-                    <ul id="systemLog">
-                        <li><span class="log-time">System</span> Ready for input.</li>
-                    </ul>
+                <div class="side-column">
+                    <div class="console-panel collapsed" id="consolePanel">
+                        <div class="console-header">
+                            <h3>System Console</h3>
+                            <button id="consoleToggleBtn" class="console-toggle" type="button" aria-expanded="false" aria-label="Expand console">
+                                <span id="consoleToggleLabel" class="console-toggle-label">Click to Expand</span>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                            </button>
+                        </div>
+                        <ul id="systemLog">
+                            <li><span class="log-time">System</span> Ready for input.</li>
+                        </ul>
+                    </div>
+
+                    <!-- Copy Deck Lookup: local search only, never sent to Gemini -->
+                    <div class="deck-panel" id="deckPanel">
+                        <div class="deck-header">
+                            <h3>Copy Deck Lookup</h3>
+                            <span class="deck-badge">Local only</span>
+                        </div>
+                        <p class="deck-hint">Load your Copy Deck export to find an AEM ID while reviewing the report above. File format: 3 columns. Header as: Activity Name - AEM ID - Venue or Alternative ID (Your Choice). This search runs entirely in your browser, it's optional to use.</p>
+
+                        <div class="deck-upload" onclick="document.getElementById('deckFilePicker').click()">
+                            Load Copy Deck file (.xlsx / .csv)
+                            <input type="file" id="deckFilePicker" hidden accept=".xlsx, .xls, .csv">
+                        </div>
+                        <div id="deckStatus" class="deck-status">No file loaded yet.</div>
+
+                        <input type="text" id="deckSearchInput" placeholder="Search Copy Deck Title..." disabled>
+
+                        <div class="deck-table-wrap">
+                            <table class="deck-table">
+                                <thead>
+                                    <tr><th>Title</th><th>AEM ID</th><th>Venue</th></tr>
+                                </thead>
+                                <tbody id="deckTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
@@ -307,6 +533,23 @@
         li.innerHTML = `<span class="log-time">[${time}]</span> ${message} <span class="${statusClass}">[${statusText}]</span>`;
         // Add to top of list
         ul.insertBefore(li, ul.firstChild);
+    }
+
+    // Maps a Gemini API HTTP status to a plain-language explanation, so the
+    // console shows something actionable instead of just a bare number.
+    function describeGeminiError(status) {
+        const table = {
+            400: "Bad Request — the request body, a parameter, or the model name is wrong or missing.",
+            401: "Unauthorized — the API key is missing, expired, or invalid.",
+            403: "Forbidden — the API key lacks permission, or a billing/region requirement is unmet.",
+            404: "Not Found — the model name or resource does not exist.",
+            429: "Rate Limited — you've exceeded requests-per-minute or your daily token quota.",
+            499: "Cancelled — the connection closed or timed out before Google responded.",
+            500: "Server Error — an unexpected error on Google's end, often triggered by inputs that are too long.",
+            503: "Unavailable — Google's servers or this model are temporarily overloaded.",
+            504: "Timeout — the server took too long to process a large or complex request."
+        };
+        return table[status] || "Unrecognized Error — see the message below for details.";
     }
 
     // 1. Excel Parsing
@@ -404,6 +647,7 @@
 
         // Clear previous output
         outputDiv.innerText = "";
+        exportPdfBtn.disabled = true; // last report is gone; re-enabled only on a fresh success below
 
         logToConsole("--- Starting Audit ---", "INFO", "status-ok");
 
@@ -428,6 +672,7 @@
         logToConsole("Connecting to Google Servers...", "WAITING", "status-wait");
 
 	  // --- Master PDF and Master Excel is a variable now ---
+      
 
         const masterTruthText = isMasterExcelReady ? masterExcelText : pdfText;
         const masterTypeName = isMasterExcelReady ? "Master Excel" : "Master PDF";
@@ -438,10 +683,15 @@
         1. ${masterTypeName} is the absolute Source of Truth.
         2. If PDF uploaded: Focus on components: GOOD TO KNOW, THINGS TO DO, SPA, MUSIC, and ENTERTAINMENT.
         3. Match 24h Excel times (e.g. 16:00) to 12h Master times (e.g. 4:00 pm).
-        4. Titles: Allow fuzzy matching (e.g. "Main Dining Room 5" matches "Main Dining Room" or "Origami Class" matches "Arts & Crafts: Origami" or "Adult Volleyball Competition" matches "Volleyball Competition: Adults (18+)").
+        4. Titles: Two titles may be treated as the same activity ONLY if they describe the
+            identical event — same subject, same person, performer, host, or band, and the same type of activity — just worded, ordered, or formatted differently
+            (e.g. "Adult Volleyball Competition" matches "Volleyball Competition: Adults (18+)").
+            If ANY specific identifying detail differs — a different person's name, a different
+            band, a different genre, a different theme, a different type of event — the titles
+            do NOT match, even if the time and venue are identical. Report these under TITLE / CONTENT MISMATCHES.
         5. Venues: Allow synonyms (e.g. "Pool Deck" matches "Poolside" or "Photo Gallery" matches "Focus Photo Gallery").
         6. Times: Must be an exact match.
-
+        
         Source of Truth (${masterTypeName}): ${masterTruthText}
         File to AEM Audit (Excel): ${excelText}
 
@@ -449,25 +699,47 @@
         1. MISSING OR EXTRA ACTIVITIES
         2. TIME MISMATCHES
         3. VENUE MISMATCHES (Add time for referance)
-	4. DUBLICATES
+        4. TITLE / CONTENT MISMATCHES (Add time/venue for referance)
+	    5. DUBLICATES
+        
         If perfectly matched, say: "The AEM Export file is a 100% match with the ${masterTypeName}."`;
 
         try {
             logToConsole("Sent to Google API", "YES", "status-ok");
 
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${key}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: { temperature: 0.1 }
-                })
-            });
+            let response;
+            try {
+                response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${key}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: prompt }] }],
+                        generationConfig: { temperature: 0.1 }
+                    })
+                });
+            } catch (networkErr) {
+                // The request never reached Google at all — offline, DNS failure, or
+                // the network/firewall blocking generativelanguage.googleapis.com.
+                // Flagged right here (not guessed from the exception type below),
+                // so a later, unrelated bug can't get mislabeled as "no connection".
+                const wrapped = new Error("Could not reach Google's servers. Check your internet connection, or ask IT whether this network blocks generativelanguage.googleapis.com.");
+                wrapped.isNetworkFailure = true;
+                throw wrapped;
+            }
 
             if (!response.ok) {
-                const errorData = await response.json();
-                logToConsole("API Key / Request Valid", "NO", "status-error");
-                throw new Error(errorData.error?.message || "Unknown API Error");
+                // .catch() guards against error responses that aren't valid JSON
+                // (some 5xx errors return an empty or non-JSON body)
+                const errorData = await response.json().catch(() => ({}));
+                const friendly = describeGeminiError(response.status);
+                const shortReason = friendly.split(' — ')[0]; // e.g. "Unauthorized" — the full sentence goes in the output box below
+                logToConsole(`API Error [${response.status}] — ${shortReason}`, "FAILED", "status-error");
+                const apiError = new Error(
+                    `[${response.status}] ${friendly}` +
+                    (errorData.error?.message ? ` — ${errorData.error.message}` : '')
+                );
+                apiError.alreadyLogged = true; // stop the catch below from logging a second, less useful line on top
+                throw apiError;
             }
 
             logToConsole("API Request Accepted", "YES", "status-ok");
@@ -484,13 +756,24 @@
             if (result.candidates && result.candidates[0].content.parts[0].text) {
                 document.getElementById('output').innerText = result.candidates[0].content.parts[0].text;
                 logToConsole("Audit Complete", "SUCCESS", "status-ok");
+                exportPdfBtn.disabled = false;
             } else {
                 throw new Error("AI returned an empty response. Check safety filters.");
             }
 
         } catch (err) {
-            logToConsole("Audit Lifecycle Interrupted", "CRASHED", "status-error");
-            outputDiv.innerText = "Error: " + err.message;
+            if (err.isNetworkFailure) {
+                logToConsole("Network Request Failed", "NO CONNECTION", "status-error");
+                outputDiv.innerText = "Error: " + err.message;
+            } else {
+                // Skip this generic line if a more specific one was already logged
+                // above (e.g. the API Error [status] line) — avoids burying the
+                // useful message under a vague one, since new entries sit on top.
+                if (!err.alreadyLogged) {
+                    logToConsole("Audit Lifecycle Interrupted", "CRASHED", "status-error");
+                }
+                outputDiv.innerText = "Error: " + err.message;
+            }
         } finally {
             // --- RESTORE BUTTON STATE ---
             // This ensures the button unlocks whether the process succeeds or fails
@@ -500,6 +783,149 @@
             runBtn.style.cursor = "pointer";
         }
     };
+
+    // CONSOLE COLLAPSE TOGGLE
+    const consolePanel = document.getElementById('consolePanel');
+    const consoleToggleBtn = document.getElementById('consoleToggleBtn');
+    const consoleToggleLabel = document.getElementById('consoleToggleLabel');
+    consoleToggleBtn.addEventListener('click', () => {
+        const collapsed = consolePanel.classList.toggle('collapsed');
+        consoleToggleBtn.setAttribute('aria-expanded', String(!collapsed));
+        consoleToggleBtn.setAttribute('aria-label', collapsed ? 'Expand console' : 'Collapse console');
+        consoleToggleLabel.textContent = collapsed ? 'Click to Expand' : 'Click to Collapse';
+    });
+
+    // ==========================================================
+    // COPY DECK LOOKUP — entirely local, isolated from the audit.
+    // Same search logic as the standalone Copy Deck Finder tool.
+    // This data is never read by the Gemini fetch call above.
+    // ==========================================================
+    let deckMasterData = [];
+
+    const DECK_ICON_COPY = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg><span>Copy</span>';
+    const DECK_ICON_CHECK = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>Copied</span>';
+
+    const deckFilePicker = document.getElementById('deckFilePicker');
+    const deckSearchInput = document.getElementById('deckSearchInput');
+    const deckStatus = document.getElementById('deckStatus');
+    const deckTableBody = document.getElementById('deckTableBody');
+
+    deckFilePicker.addEventListener('change', function (e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+
+        deckStatus.innerText = 'Processing rows... please wait.';
+
+        reader.onload = function (event) {
+            const data = new Uint8Array(event.target.result);
+            const workbook = XLSX.read(data, { type: 'array', raw: true });
+            const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+
+            // raw: false keeps long AEM IDs as exact text instead of scientific notation
+            deckMasterData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", raw: false });
+            deckMasterData.shift(); // drop the header row
+
+            deckStatus.innerText = '✓ Loaded ' + deckMasterData.length + ' rows. Ready to search.';
+            deckSearchInput.disabled = false;
+        };
+        reader.readAsArrayBuffer(file);
+    });
+
+    deckSearchInput.addEventListener('keyup', function () {
+        const query = this.value.toLowerCase();
+        const terms = query.split(' ').filter(t => t !== "");
+
+        const matches = deckMasterData.filter(row => {
+            if (!row || row.length === 0) return false;
+            const columnA = String(row[0] || "").toLowerCase();
+            return terms.every(term => columnA.includes(term));
+        });
+
+        const results = matches.slice(0, 100);
+
+        deckTableBody.innerHTML = results.map(row => {
+            const aemId = row[1] || '';
+            const copyBtnHtml = aemId ? `<button class="deck-copy-btn" data-id="${aemId}" onclick="copyDeckID(this)" title="Copy ID">${DECK_ICON_COPY}</button>` : '';
+
+            return `
+                <tr>
+                    <td><strong>${row[0] || ''}</strong></td>
+                    <td>${aemId} ${copyBtnHtml}</td>
+                    <td>${row[2] || ''}</td>
+                </tr>
+            `;
+        }).join('');
+
+        if (query !== "") {
+            deckStatus.innerText = 'Found ' + matches.length + ' matches.';
+        } else {
+            deckStatus.innerText = '✓ ' + deckMasterData.length + ' rows loaded. Ready to search.';
+            deckTableBody.innerHTML = "";
+        }
+    });
+
+    function copyDeckID(buttonElement) {
+        const idToCopy = buttonElement.getAttribute('data-id');
+        navigator.clipboard.writeText(idToCopy).then(() => {
+            buttonElement.innerHTML = DECK_ICON_CHECK;
+            buttonElement.classList.add('copied');
+            setTimeout(() => {
+                buttonElement.innerHTML = DECK_ICON_COPY;
+                buttonElement.classList.remove('copied');
+            }, 1500);
+        });
+    }
+
+    // ==========================================================
+    // PDF EXPORT — takes exactly what's already shown in the report
+    // box and lays it into a PDF, unchanged. Does not touch the audit
+    // or the Gemini call in any way; only reads #output's text.
+    // ==========================================================
+    const exportPdfBtn = document.getElementById('exportPdfBtn');
+    exportPdfBtn.addEventListener('click', () => {
+        const reportText = document.getElementById('output').innerText;
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+
+        const marginX = 48, marginY = 56;
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+        const maxLineWidth = pageWidth - marginX * 2;
+        let y = marginY;
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(14);
+        doc.setTextColor(44, 62, 80); // #2c3e50, matches the site accent
+        doc.text('Smart AEM Auditor — Report', marginX, y);
+        y += 20;
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(10);
+        doc.setTextColor(120, 120, 120);
+        doc.text(new Date().toLocaleString(), marginX, y);
+        y += 24;
+
+        doc.setFontSize(11);
+        doc.setTextColor(30, 30, 30);
+        const lineHeight = 15;
+
+        // splitTextToSize respects the existing line breaks in the report and
+        // wraps any long lines to fit the page, so the layout matches what's
+        // already on screen instead of being restructured.
+        const lines = doc.splitTextToSize(reportText, maxLineWidth);
+        lines.forEach(line => {
+            if (y > pageHeight - marginY) {
+                doc.addPage();
+                y = marginY;
+            }
+            doc.text(line, marginX, y);
+            y += lineHeight;
+        });
+
+        const dateStamp = new Date().toISOString().slice(0, 10);
+        doc.save(`AEM-Audit-Report-${dateStamp}.pdf`);
+    });
 </script>
 
     <footer class="py-8 text-slate-400 text-sm border-t border-slate-100 mt-12">
