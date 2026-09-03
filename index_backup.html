@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth scroll-pt-28">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Smart Schedule Auditor | asariko</title>
+    <meta name="description" content="Smart AEM Auditor — compare an AEM day view against a Cruise Compass PDF or TESS report. Files are read in your browser and never uploaded; the extracted text is sent directly to Google's Gemini API for the audit." />
+
+    <!-- Logo -->
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="apple-touch-icon" href="favicon.png">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Tailwind CSS — prebuilt with the Tailwind CLI. Rebuild after editing classes with:
+         npx tailwindcss@3 -c tailwind.config.js -i in.css -o tailwind.css --minify -->
+    <link rel="stylesheet" href="tailwind.css">
+
+    <!-- Libraries (unchanged) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="style.css">
+
+    <style>
+        /* --- asariko theme overrides --- */
+        h1.text-slate-900,
+        h2.text-slate-900 {
+            color: #2c3e50 !important;
+        }
+
+        header a.text-slate-900 {
+            color: #2c3e50 !important;
+        }
+
+        /* --- Tool styles, re-themed to #2c3e50 --- */
+        /* Side-by-side layout */
+        .app-container {
+            display: flex;
+            flex-direction: row;
+            gap: 24px;
+            align-items: flex-start;
+        }
+
+        /* Main Audit Tool Panel (line 55-181 flex ratio is right left ratio). */
+        .main-panel {
+            flex: 3;
+            background: #ffffff;
+            padding: 32px;
+            border: 1px solid #f1f5f9;
+            border-radius: 24px;
+            box-shadow: 0 8px 30px rgb(0 0 0 / 0.04);
+        }
+
+        .input-group { margin-bottom: 24px; }
+        .input-group label {
+            font-weight: 600;
+            font-size: 13px;
+            display: block;
+            margin-bottom: 8px;
+            color: #2c3e50;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 13px 15px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            box-sizing: border-box;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 14px;
+            color: #0f172a;
+            outline: none;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+        input[type="text"]::placeholder { color: #94a3b8; }
+        input[type="text"]:focus {
+            border-color: #2c3e50;
+            box-shadow: 0 0 0 3px rgba(44, 62, 80, 0.08);
+        }
+
+        .api-key-row { display: flex; flex-wrap: wrap; gap: 10px; }
+        .api-key-row input[type="text"] { flex: 1 1 220px; width: auto; }
+
+        select.provider-select, select.model-select {
+            flex: 1 1 140px;
+            min-width: 0;
+            padding: 13px 15px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            box-sizing: border-box;
+            font-family: inherit;
+            font-size: 14px;
+            color: #0f172a;
+            background: #ffffff;
+            outline: none;
+            cursor: pointer;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        select.model-select { flex-basis: 180px; }
+        select.provider-select:focus, select.model-select:focus {
+            border-color: #2c3e50;
+            box-shadow: 0 0 0 3px rgba(44, 62, 80, 0.08);
+        }
+        select.model-select:disabled {
+            background: #f8fafc;
+            color: #94a3b8;
+            cursor: not-allowed;
+        }
+
+        .drop-zone {
+            border: 2px dashed #2c3e50;
+            padding: 24px;
+            text-align: center;
+            margin-bottom: 14px;
+            border-radius: 12px;
+            cursor: pointer;
+            background: #f8fafc;
+            transition: background-color 0.2s ease, border-color 0.2s ease;
+        }
+        .drop-zone:hover {
+            background: #f1f5f9;
+            border-color: #1e2b38;
+        }
+        .drop-zone strong {
+            color: #2c3e50;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .file-name {
+            font-size: 12px;
+            color: #64748b;
+            margin-top: 8px;
+            font-weight: 500;
+        }
+
+        /* The script sets runBtn.style.background inline on enable/disable, so these
+           need !important to win — this keeps the button on-theme without editing the
+           script's logic. */
+        button {
+            width: 100%;
+            padding: 16px;
+            background-color: #2c3e50 !important;
+            color: #ffffff;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 600;
+            font-family: inherit;
+            margin-top: 10px;
+            transition: background-color 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease;
+        }
+        button:hover:not(:disabled) {
+            background-color: #1e2b38 !important;
+            transform: translateY(-1px);
+            box-shadow: 0 6px 18px rgba(44, 62, 80, 0.18);
+        }
+        button:disabled {
+            background-color: #94a3b8 !important;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        #output {
+            margin-top: 20px;
+            white-space: pre-wrap;
+            background: #f8fafc;
+            padding: 20px;
+            border-radius: 12px;
+            line-height: 1.65;
+            border: 1px solid #f1f5f9;
+            font-size: 14px;
+            color: #475569;
+        }
+
+        /* Secondary action — outlined, so it doesn't compete with Run Audit.
+           Higher-specificity ID selector + !important beats the page-wide
+           `button` rule's solid teal background without touching that rule. */
+        #exportPdfBtn {
+            margin-top: 14px;
+            background: #ffffff !important;
+            color: #2c3e50;
+            border: 1px solid #cbd5e1;
+        }
+        #exportPdfBtn:hover:not(:disabled) {
+            background-color: #f8fafc !important;
+            box-shadow: 0 6px 18px rgba(44, 62, 80, 0.08);
+        }
+        #exportPdfBtn:disabled {
+            background-color: #ffffff !important;
+            color: #cbd5e1;
+            border-color: #e2e8f0;
+        }
+
+        /* System Console Panel — kept dark on purpose, softened to slate */
+        /* Holds the console + the Copy Deck lookup panel, stacked, so the
+           pair scrolls as one sticky unit next to the main panel.(line 55-181 flex ratio is right left ratio)*/
+        .side-column {
+            flex: 2;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            position: sticky;
+            top: 112px; /* clears the fixed navbar */
+        }
+
+        .console-panel {
+            background: #0f172a;
+            color: #cbd5e1;
+            padding: 22px;
+            border-radius: 24px;
+            box-shadow: 0 8px 30px rgb(0 0 0 / 0.18);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        }
+        .console-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #1e293b;
+            padding-bottom: 12px;
+            margin-bottom: 12px;
+        }
+        .console-header h3 {
+            margin: 0;
+            color: #5eead4;
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .console-toggle {
+            background: none;
+            border: none;
+            color: #5eead4;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: background-color 0.15s ease;
+        }
+        .console-toggle:hover { background-color: rgba(255, 255, 255, 0.08); }
+        .console-toggle-label {
+            font-size: 11px;
+            font-weight: 500;
+            color: #94a3b8;
+            text-transform: none;
+            letter-spacing: normal;
+        }
+        .console-toggle svg {
+            width: 16px;
+            height: 16px;
+            transition: transform 0.25s ease;
+        }
+        /* Chevron points up when expanded, down when collapsed */
+        .console-panel.collapsed .console-toggle svg { transform: rotate(-90deg); }
+
+        #systemLog { list-style: none; padding: 0; margin: 0; font-size: 12.5px; line-height: 1.55; }
+        #systemLog li {
+            margin-bottom: 8px;
+            padding-bottom: 8px;
+            border-bottom: 1px dashed #1e293b;
+        }
+        #systemLog li:last-child { border-bottom: none; }
+
+        /* Collapsed: only the newest entry (always first, since new logs are
+           inserted at the top) stays visible. */
+        .console-panel.collapsed #systemLog li:not(:first-child) { display: none; }
+        .console-panel.collapsed #systemLog li:first-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+
+        .log-time { color: #64748b; font-size: 11px; margin-right: 5px; }
+        .status-ok { color: #4ade80; font-weight: 600; }
+        .status-error { color: #f87171; font-weight: 600; }
+        .status-wait { color: #fbbf24; font-weight: 600; }
+        .token-count { color: #38bdf8; font-weight: 600; border-bottom: 1px solid #38bdf8; padding-bottom: 2px; }
+
+        /* --- Copy Deck Lookup panel ---
+           Local, client-side search only. Nothing here is ever sent to Gemini
+           or touches the audit's fetch call — it's a self-contained feature
+           for cross-checking an AEM ID while reading the report above. */
+        .deck-panel {
+            background: #ffffff;
+            padding: 20px;
+            border: 1px solid #f1f5f9;
+            border-radius: 24px;
+            box-shadow: 0 8px 30px rgb(0 0 0 / 0.04);
+        }
+        .deck-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .deck-header h3 {
+            margin: 0;
+            color: #2c3e50;
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+        }
+        /* Local Only badge in the Copy Deck Lookup */
+        .deck-badge {
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: #64748b;
+            background: #f1f5f9;
+            border: 1px solid #e2e8f0;
+            padding: 3px 8px;
+            border-radius: 999px;
+        }
+        .deck-hint {
+            font-size: 12px;
+            color: #64748b;
+            line-height: 1.5;
+            margin: 0 0 14px;
+        }
+        .deck-upload {
+            border: 2px dashed #cbd5e1;
+            border-radius: 10px;
+            padding: 14px;
+            text-align: center;
+            cursor: pointer;
+            font-size: 12.5px;
+            font-weight: 600;
+            color: #2c3e50;
+            background: #f8fafc;
+            transition: background-color 0.2s ease, border-color 0.2s ease;
+        }
+        .deck-upload:hover { background: #f1f5f9; border-color: #94a3b8; }
+        .deck-status { font-size: 11.5px; color: #64748b; margin: 8px 0 12px; }
+        #deckSearchInput { margin-bottom: 12px; }
+        #deckSearchInput:disabled { background: #f8fafc; color: #94a3b8; cursor: not-allowed; }
+
+        .deck-table-wrap {
+            max-height: 280px;
+            overflow-y: auto;
+            overflow-x: auto;
+            border: 1px solid #f1f5f9;
+            border-radius: 10px;
+        }
+        .deck-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+        .deck-table thead th {
+            background: #2c3e50;
+            color: #ffffff;
+            padding: 8px 10px;
+            text-align: left;
+            font-weight: 500;
+            white-space: nowrap;
+            position: sticky;
+            top: 0;
+        }
+        .deck-table td {
+            padding: 8px 10px;
+            border-bottom: 1px solid #f1f5f9;
+            color: #475569;
+            vertical-align: top;
+        }
+        .deck-table td strong { color: #0f172a; font-weight: 600; }
+        .deck-table tbody tr:hover { background-color: #f8fafc; }
+        .deck-table td:nth-child(2) { white-space: nowrap; }
+
+        /* The page-wide `button` rule sets width:100% and !important backgrounds
+           for the big Run Audit button — these overrides keep the small copy
+           buttons their own size and color without touching that rule. */
+        .deck-copy-btn {
+            width: auto;
+            margin: 0;
+            padding: 3px 7px;
+            background: #ffffff !important;
+            border: 1px solid #cbd5e1;
+            color: #2c3e50;
+            font-size: 10.5px;
+            font-weight: 600;
+            font-family: inherit;
+            border-radius: 6px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .deck-copy-btn:hover {
+            background-color: #2c3e50 !important;
+            color: #ffffff;
+            transform: none;
+            box-shadow: none;
+        }
+        .deck-copy-btn.copied,
+        .deck-copy-btn.copied:hover {
+            background-color: #16a34a !important;
+            color: #ffffff;
+            border-color: #16a34a;
+        }
+
+        /* Mobile responsiveness */
+        @media (max-width: 900px) {
+            .app-container { flex-direction: column; }
+            .side-column { width: 100%; box-sizing: border-box; position: static; }
+            .console-panel { width: 100%; box-sizing: border-box; }
+            .main-panel { padding: 24px; }
+        }
+    </style>
+</head>
+
+<body class="bg-white text-slate-900 selection:bg-slate-200 selection:text-slate-900 font-sans">
+
+    <!-- Navbar -->
+    <header id="navbar" class="fixed top-0 left-0 right-0 z-50 bg-transparent transition-all duration-300 py-6">
+        <div class="max-w-7xl mx-auto px-6 sm:px-8 lg:px-12 flex items-center justify-between">
+            <a href="https://asariko.net" class="z-50 relative">
+                <img
+                    src="assets/logo.png"
+                    alt="asariko logo"
+                    class="h-10 md:h-12 w-auto"
+                >
+            </a>
+
+            <!-- Desktop Nav -->
+            <nav class="hidden md:flex items-center gap-8">
+                <a href="https://asariko.net" class="text-sm font-medium text-slate-500 hover:text-slate-900 transition-colors">Home</a>
+                <a href="https://asariko.net/projects" class="text-sm font-medium text-slate-500 hover:text-slate-900 transition-colors">Projects</a>
+                <a href="https://asariko.net/#about" class="text-sm font-medium text-slate-500 hover:text-slate-900 transition-colors">About</a>
+                <a href="https://asariko.net/#contact" class="text-sm font-medium text-slate-500 hover:text-slate-900 transition-colors">Contact</a>
+            </nav>
+
+            <!-- Mobile Menu Button -->
+            <button id="mobile-menu-btn" class="md:hidden text-slate-900 p-2 z-50 relative" aria-label="Toggle menu" style="width:auto; background:transparent !important; margin-top:0; box-shadow:none;">
+                <i data-lucide="menu" class="w-6 h-6"></i>
+            </button>
+        </div>
+
+        <!-- Mobile Nav Overlay -->
+        <div id="mobile-menu" class="fixed top-0 left-0 w-screen h-screen bg-white/70 backdrop-blur-sm z-40 flex-col items-center justify-center gap-8 hidden opacity-0 transition-opacity duration-300">
+            <a href="https://asariko.net" class="mobile-link text-2xl font-medium text-slate-900">Home</a>
+            <a href="https://asariko.net/projects" class="mobile-link text-2xl font-medium text-slate-900">Projects</a>
+            <a href="https://asariko.net/#about" class="mobile-link text-2xl font-medium text-slate-900">About</a>
+            <a href="https://asariko.net/#contact" class="mobile-link text-2xl font-medium text-slate-900">Contact</a>
+        </div>
+    </header>
+
+    <main class="pt-28 flex-grow w-full max-w-7xl mx-auto px-6 sm:px-8 lg:px-12 flex flex-col gap-12 pb-24">
+
+        <section class="scroll-mt-24 pt-8 md:pt-12">
+            <div class="max-w-3xl">
+                <h1 class="text-4xl md:text-5xl font-bold tracking-tight text-slate-900 mb-4">Smart AEM Auditor</h1>
+                <p class="text-xl text-slate-400 font-light">
+                    Compare AEM Day View against the Compass PDF or TESS Report (V1.4).
+                </p>
+            </div>
+        </section>
+
+        <section class="scroll-mt-24">
+            <div class="app-container">
+                <div class="main-panel">
+
+                    <div class="input-group">
+                        <label>API Key</label>
+                        <div class="api-key-row">
+                            <input type="text" id="apiKey" placeholder="Paste your API Key here...">
+                            <select id="providerSelect" class="provider-select">
+                                <option value="gemini" selected>Gemini</option>
+                                <option value="groq">Groq</option>
+                                <option value="chatgpt">ChatGPT</option>
+                                <option value="claude">Claude</option>
+                            </select>
+                            <select id="modelSelect" class="model-select"></select>
+                        </div>
+                    </div>
+
+                    <div class="drop-zone" onclick="document.getElementById('excelFile').click()">
+                        <strong>1. Upload AEM Excel/CSV File</strong>
+                        <input type="file" id="excelFile" hidden accept=".xlsx, .csv">
+                        <div id="excelName" class="file-name">No file selected</div>
+                    </div>
+
+                    <div class="drop-zone" onclick="document.getElementById('pdfFile').click()">
+                        <strong>2. Upload Cruise Compass PDF (.pdf)</strong>
+                        <input type="file" id="pdfFile" hidden accept=".pdf">
+                        <div id="pdfName" class="file-name">No file selected</div>
+                    </div>
+
+                    <div class="drop-zone" onclick="document.getElementById('masterExcelFile').click()">
+                        <strong>OR: Upload DM Export from TESS (.xlsx, .csv)</strong>
+                        <input type="file" id="masterExcelFile" hidden accept=".xlsx, .csv">
+                        <div id="masterExcelName" class="file-name">No file selected</div>
+                    </div>
+
+                    <button id="runBtn">Run Audit</button>
+
+                    <button id="exportPdfBtn" disabled>Export Report as PDF</button>
+
+                    <div id="output">Results will appear here...</div>
+                </div>
+
+                <div class="side-column">
+                    <div class="console-panel collapsed" id="consolePanel">
+                        <div class="console-header">
+                            <h3>System Console</h3>
+                            <button id="consoleToggleBtn" class="console-toggle" type="button" aria-expanded="false" aria-label="Expand console">
+                                <span id="consoleToggleLabel" class="console-toggle-label">Click to Expand</span>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                            </button>
+                        </div>
+                        <ul id="systemLog">
+                            <li><span class="log-time">System</span> Ready for input.</li>
+                        </ul>
+                    </div>
+
+                    <!-- Copy Deck Lookup: local search only, never sent to Gemini -->
+                    <div class="deck-panel" id="deckPanel">
+                        <div class="deck-header">
+                            <h3>Copy Deck Lookup</h3>
+                            <span class="deck-badge">Local only</span>
+                        </div>
+                        <p class="deck-hint">Load your Copy Deck export to find an AEM ID while reviewing the report above. File format: 3 columns. Header as: Activity Name - AEM ID - Venue or Alternative ID (Your Choice). This search runs entirely in your browser, it's optional to use.</p>
+
+                        <div class="deck-upload" onclick="document.getElementById('deckFilePicker').click()">
+                            Load Copy Deck file (.xlsx / .csv)
+                            <input type="file" id="deckFilePicker" hidden accept=".xlsx, .xls, .csv">
+                        </div>
+                        <div id="deckStatus" class="deck-status">No file loaded yet.</div>
+
+                        <input type="text" id="deckSearchInput" placeholder="Search Copy Deck Title..." disabled>
+
+                        <div class="deck-table-wrap">
+                            <table class="deck-table">
+                                <thead>
+                                    <tr><th>Title</th><th>AEM ID</th><th>Venue</th></tr>
+                                </thead>
+                                <tbody id="deckTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+<script>
+    let excelText = "";
+    let pdfText = "";
+    let masterExcelText = "";
+    let isExcelReady = false;
+    let isPdfReady = false;
+    let isMasterExcelReady = false;
+
+    // Per-provider model lists shown in the dropdown, in the order given.
+    const PROVIDER_MODELS = {
+        gemini: {
+            default: 'gemini-3.6-flash',
+            models: [
+                { value: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash' },
+                { value: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash' },
+                { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
+                { value: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash Lite' },
+                { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite' },
+            ],
+        },
+        groq: {
+            default: 'openai/gpt-oss-20b',
+            models: [
+                { value: 'openai/gpt-oss-120b', label: 'OpenAI GPT-OSS 120B' },
+                { value: 'qwen/qwen3.6-27b', label: 'Qwen 3.6 27B' },
+                { value: 'minimaxai/minimax-m2.7', label: 'MiniMax M2.7' },
+                { value: 'openai/gpt-oss-20b', label: 'OpenAI GPT-OSS 20B' },
+                { value: 'llama-4-scout', label: 'Llama 4 Scout' },
+            ],
+        },
+        chatgpt: {
+            default: 'gpt-5.6-luna',
+            models: [
+                { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+                { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+                { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+                { value: 'o3-pro', label: 'o3-pro' },
+                { value: 'o3', label: 'o3' },
+                { value: 'o4-mini', label: 'o4-mini' },
+            ],
+        },
+        claude: {
+            default: 'claude-sonnet-5',
+            models: [
+                { value: 'claude-fable-5', label: 'Claude Fable 5.1 / 5' },
+                { value: 'claude-mythos-5', label: 'Claude Mythos 5.1 / 5' },
+                { value: 'claude-opus-5', label: 'Claude Opus 5' },
+                { value: 'claude-opus-4.8', label: 'Claude Opus 4.8 / 4.6' },
+                { value: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
+                { value: 'claude-sonnet-4', label: 'Claude 4 Sonnet / Claude 3.7 Sonnet' },
+                { value: 'claude-haiku-4.5', label: 'Claude Haiku 4.5' },
+            ],
+        },
+    };
+
+    // Model names are listed for all four providers, but only Gemini has an API
+    // call wired up below — Groq/ChatGPT/Claude still block on Run Audit.
+    function populateModelSelect(provider) {
+        const modelSelect = document.getElementById('modelSelect');
+        modelSelect.innerHTML = '';
+        modelSelect.disabled = false;
+        const { models, default: defaultModel } = PROVIDER_MODELS[provider];
+        models.forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m.value;
+            opt.textContent = m.label;
+            if (m.value === defaultModel) opt.selected = true;
+            modelSelect.appendChild(opt);
+        });
+    }
+    document.getElementById('providerSelect').onchange = (e) => populateModelSelect(e.target.value);
+    populateModelSelect('gemini');
+
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    // Helper function to write to our visual console
+    function logToConsole(message, statusText, statusClass) {
+        const ul = document.getElementById('systemLog');
+        const li = document.createElement('li');
+        const time = new Date().toLocaleTimeString();
+        li.innerHTML = `<span class="log-time">[${time}]</span> ${message} <span class="${statusClass}">[${statusText}]</span>`;
+        // Add to top of list
+        ul.insertBefore(li, ul.firstChild);
+    }
+
+    // Maps a Gemini API HTTP status to a plain-language explanation, so the
+    // console shows something actionable instead of just a bare number.
+    function describeGeminiError(status) {
+        const table = {
+            400: "Bad Request — the request body, a parameter, or the model name is wrong or missing.",
+            401: "Unauthorized — the API key is missing, expired, or invalid.",
+            403: "Forbidden — the API key lacks permission, or a billing/region requirement is unmet.",
+            404: "Not Found — the model name or resource does not exist.",
+            429: "Rate Limited — you've exceeded requests-per-minute or your daily token quota.",
+            499: "Cancelled — the connection closed or timed out before Google responded.",
+            500: "Server Error — an unexpected error on Google's end, often triggered by inputs that are too long.",
+            503: "Unavailable — Google's servers or this model are temporarily overloaded.",
+            504: "Timeout — the server took too long to process a large or complex request."
+        };
+        return table[status] || "Unrecognized Error — see the message below for details.";
+    }
+
+    // 1. Excel Parsing
+    document.getElementById('excelFile').onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        document.getElementById('excelName').innerText = "Processing: " + file.name;
+        isExcelReady = false;
+        logToConsole(`Reading ${file.name}...`, "WAITING", "status-wait");
+
+        try {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const data = new Uint8Array(event.target.result);
+                const wb = XLSX.read(data, {type: 'array'});
+                const ws = wb.Sheets[wb.SheetNames[0]];
+                excelText = XLSX.utils.sheet_to_txt(ws);
+                isExcelReady = true;
+                document.getElementById('excelName').innerText = "Ready: " + file.name;
+                logToConsole("Excel Data Extracted", "OK", "status-ok");
+            };
+            reader.readAsArrayBuffer(file);
+        } catch (err) {
+            logToConsole("Excel Extraction Failed", "ERROR", "status-error");
+        }
+    };
+
+    // 2. PDF Parsing
+    document.getElementById('pdfFile').onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        document.getElementById('pdfName').innerText = "Processing: " + file.name;
+        isPdfReady = false;
+        logToConsole(`Reading ${file.name}...`, "WAITING", "status-wait");
+
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+            try {
+                const typedarray = new Uint8Array(event.target.result);
+                const pdf = await pdfjsLib.getDocument(typedarray).promise;
+                let text = "";
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const content = await page.getTextContent();
+                    text += content.items.map(item => item.str).join(" ");
+                }
+                pdfText = text;
+                isPdfReady = true;
+                document.getElementById('pdfName').innerText = "Ready: " + file.name;
+                logToConsole("PDF Text Extracted", "OK", "status-ok");
+            } catch (err) {
+                logToConsole(`PDF Error: ${err.message}`, "ERROR", "status-error");
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    };
+
+    // 2b. Master Excel Parsing
+    document.getElementById('masterExcelFile').onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        document.getElementById('masterExcelName').innerText = "Processing: " + file.name;
+        isMasterExcelReady = false;
+        logToConsole(`Reading ${file.name}...`, "WAITING", "status-wait");
+        try {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const data = new Uint8Array(event.target.result);
+                const wb = XLSX.read(data, {type: 'array'});
+                const ws = wb.Sheets[wb.SheetNames[0]];
+                masterExcelText = XLSX.utils.sheet_to_txt(ws);
+                isMasterExcelReady = true;
+                document.getElementById('masterExcelName').innerText = "Ready: " + file.name;
+                logToConsole("Master Excel Extracted", "OK", "status-ok");
+            };
+            reader.readAsArrayBuffer(file);
+        } catch (err) {
+            logToConsole("Master Excel Extraction Failed", "ERROR", "status-error");
+        }
+    };
+
+    // 3. AI Audit Logic
+    document.getElementById('runBtn').onclick = async () => {
+        const runBtn = document.getElementById('runBtn');
+
+        // --- BUTTON PROTECTION START ---
+        runBtn.disabled = true;
+        runBtn.innerText = "Audit in Progress...";
+        runBtn.style.background = "#6c757d"; // Gray background
+        runBtn.style.cursor = "not-allowed";
+        // --- BUTTON PROTECTION END ---
+
+        const key = document.getElementById('apiKey').value.trim();
+        const outputDiv = document.getElementById('output');
+
+        // Clear previous output
+        outputDiv.innerText = "";
+        exportPdfBtn.disabled = true; // last report is gone; re-enabled only on a fresh success below
+
+        logToConsole("--- Starting Audit ---", "INFO", "status-ok");
+
+        if (!key) {
+            logToConsole("API Key Check", "FAILED", "status-error");
+            runBtn.disabled = false;
+            runBtn.innerText = "Run Audit";
+            runBtn.style.background = "#007bff";
+            runBtn.style.cursor = "pointer";
+            return alert("Please enter your API Key.");
+        }
+
+        const provider = document.getElementById('providerSelect').value;
+        const selectedModel = document.getElementById('modelSelect').value;
+        if (provider !== 'gemini') {
+            logToConsole("Provider Check", "NOT SUPPORTED YET", "status-error");
+            runBtn.disabled = false;
+            runBtn.innerText = "Run Audit";
+            runBtn.style.background = "#007bff";
+            runBtn.style.cursor = "pointer";
+            return alert("Groq, ChatGPT, and Claude support are coming soon. Please select Gemini for now.");
+        }
+
+        if (!isExcelReady || (!isPdfReady && !isMasterExcelReady)) {
+            logToConsole("File Check", "NOT READY", "status-error");
+            runBtn.disabled = false;
+            runBtn.innerText = "Run Audit";
+            runBtn.style.background = "#007bff";
+            runBtn.style.cursor = "pointer";
+            return alert("Please ensure you have uploaded the AEM File to Audit (1) AND a Master File (2 or OR).");
+        }
+
+        logToConsole("Pre-flight Checks", "PASSED", "status-ok");
+        logToConsole("Connecting to Google Servers...", "WAITING", "status-wait");
+
+	  // --- Master PDF and Master Excel is a variable now ---
+      
+
+        const masterTruthText = isMasterExcelReady ? masterExcelText : pdfText;
+        const masterTypeName = isMasterExcelReady ? "Master Excel" : "Master PDF";
+
+        const prompt = `You are an expert scheduling auditor.
+        Compare the File to AEM Audit (Excel) to the ${masterTypeName}.
+        RULES:
+        1. ${masterTypeName} is the absolute Source of Truth.
+        2. If PDF uploaded: Focus on components: GOOD TO KNOW, THINGS TO DO, SPA, MUSIC, and ENTERTAINMENT.
+        3. Match 24h Excel times (e.g. 16:00) to 12h Master times (e.g. 4:00 pm).
+        4. Titles: Two titles may be treated as the same activity ONLY if they describe the
+            identical event — same subject, same person, performer, host, or band, and the same type of activity — just worded, ordered, or formatted differently
+            (e.g. "Adult Volleyball Competition" matches "Volleyball Competition: Adults (18+)").
+            If ANY specific identifying detail differs — a different person's name, a different
+            band, a different genre, a different theme, a different type of event — the titles
+            do NOT match, even if the time and venue are identical. Report these under TITLE / CONTENT MISMATCHES.
+        5. Venues: Allow synonyms (e.g. "Pool Deck" matches "Poolside" or "Photo Gallery" matches "Focus Photo Gallery").
+        6. Times: Must be an exact match.
+        
+        Source of Truth (${masterTypeName}): ${masterTruthText}
+        File to AEM Audit (Excel): ${excelText}
+
+        Report in these sections:
+        1. MISSING OR EXTRA ACTIVITIES
+        2. TIME MISMATCHES
+        3. VENUE MISMATCHES (Add time for referance)
+        4. TITLE / CONTENT MISMATCHES (Add time/venue for referance)
+	    5. DUBLICATES
+        
+        If perfectly matched, say: "The AEM Export file is a 100% match with the ${masterTypeName}."`;
+
+        try {
+            logToConsole("Sent to Google API", "YES", "status-ok");
+
+            let response;
+            try {
+                response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${key}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: prompt }] }],
+                        generationConfig: { temperature: 0.1 }
+                    })
+                });
+            } catch (networkErr) {
+                // The request never reached Google at all — offline, DNS failure, or
+                // the network/firewall blocking generativelanguage.googleapis.com.
+                // Flagged right here (not guessed from the exception type below),
+                // so a later, unrelated bug can't get mislabeled as "no connection".
+                const wrapped = new Error("Could not reach Google's servers. Check your internet connection, or ask IT whether this network blocks generativelanguage.googleapis.com.");
+                wrapped.isNetworkFailure = true;
+                throw wrapped;
+            }
+
+            if (!response.ok) {
+                // .catch() guards against error responses that aren't valid JSON
+                // (some 5xx errors return an empty or non-JSON body)
+                const errorData = await response.json().catch(() => ({}));
+                const friendly = describeGeminiError(response.status);
+                const shortReason = friendly.split(' — ')[0]; // e.g. "Unauthorized" — the full sentence goes in the output box below
+                logToConsole(`API Error [${response.status}] — ${shortReason}`, "FAILED", "status-error");
+                const apiError = new Error(
+                    `[${response.status}] ${friendly}` +
+                    (errorData.error?.message ? ` — ${errorData.error.message}` : '')
+                );
+                apiError.alreadyLogged = true; // stop the catch below from logging a second, less useful line on top
+                throw apiError;
+            }
+
+            logToConsole("API Request Accepted", "YES", "status-ok");
+            logToConsole("Waiting for AI processing...", "WAITING", "status-wait");
+
+            const result = await response.json();
+
+           // --- T..... & C....  (GEMINI 3.0 FLASH) ---
+
+            // ----------------------------
+            // ----------------------------
+
+             // Original output logic
+            if (result.candidates && result.candidates[0].content.parts[0].text) {
+                document.getElementById('output').innerText = result.candidates[0].content.parts[0].text;
+                logToConsole("Audit Complete", "SUCCESS", "status-ok");
+                exportPdfBtn.disabled = false;
+            } else {
+                throw new Error("AI returned an empty response. Check safety filters.");
+            }
+
+        } catch (err) {
+            if (err.isNetworkFailure) {
+                logToConsole("Network Request Failed", "NO CONNECTION", "status-error");
+                outputDiv.innerText = "Error: " + err.message;
+            } else {
+                // Skip this generic line if a more specific one was already logged
+                // above (e.g. the API Error [status] line) — avoids burying the
+                // useful message under a vague one, since new entries sit on top.
+                if (!err.alreadyLogged) {
+                    logToConsole("Audit Lifecycle Interrupted", "CRASHED", "status-error");
+                }
+                outputDiv.innerText = "Error: " + err.message;
+            }
+        } finally {
+            // --- RESTORE BUTTON STATE ---
+            // This ensures the button unlocks whether the process succeeds or fails
+            runBtn.disabled = false;
+            runBtn.innerText = "Run Audit";
+            runBtn.style.background = "#007bff";
+            runBtn.style.cursor = "pointer";
+        }
+    };
+
+    // CONSOLE COLLAPSE TOGGLE
+    const consolePanel = document.getElementById('consolePanel');
+    const consoleToggleBtn = document.getElementById('consoleToggleBtn');
+    const consoleToggleLabel = document.getElementById('consoleToggleLabel');
+    consoleToggleBtn.addEventListener('click', () => {
+        const collapsed = consolePanel.classList.toggle('collapsed');
+        consoleToggleBtn.setAttribute('aria-expanded', String(!collapsed));
+        consoleToggleBtn.setAttribute('aria-label', collapsed ? 'Expand console' : 'Collapse console');
+        consoleToggleLabel.textContent = collapsed ? 'Click to Expand' : 'Click to Collapse';
+    });
+
+    // ==========================================================
+    // COPY DECK LOOKUP — entirely local, isolated from the audit.
+    // Same search logic as the standalone Copy Deck Finder tool.
+    // This data is never read by the Gemini fetch call above.
+    // ==========================================================
+    let deckMasterData = [];
+
+    const DECK_ICON_COPY = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg><span>Copy</span>';
+    const DECK_ICON_CHECK = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span>Copied</span>';
+
+    const deckFilePicker = document.getElementById('deckFilePicker');
+    const deckSearchInput = document.getElementById('deckSearchInput');
+    const deckStatus = document.getElementById('deckStatus');
+    const deckTableBody = document.getElementById('deckTableBody');
+
+    deckFilePicker.addEventListener('change', function (e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+
+        deckStatus.innerText = 'Processing rows... please wait.';
+
+        reader.onload = function (event) {
+            const data = new Uint8Array(event.target.result);
+            const workbook = XLSX.read(data, { type: 'array', raw: true });
+            const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+
+            // raw: false keeps long AEM IDs as exact text instead of scientific notation
+            deckMasterData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", raw: false });
+            deckMasterData.shift(); // drop the header row
+
+            deckStatus.innerText = '✓ Loaded ' + deckMasterData.length + ' rows. Ready to search.';
+            deckSearchInput.disabled = false;
+        };
+        reader.readAsArrayBuffer(file);
+    });
+
+    deckSearchInput.addEventListener('keyup', function () {
+        const query = this.value.toLowerCase();
+        const terms = query.split(' ').filter(t => t !== "");
+
+        const matches = deckMasterData.filter(row => {
+            if (!row || row.length === 0) return false;
+            const columnA = String(row[0] || "").toLowerCase();
+            return terms.every(term => columnA.includes(term));
+        });
+
+        const results = matches.slice(0, 100);
+
+        deckTableBody.innerHTML = results.map(row => {
+            const aemId = row[1] || '';
+            const copyBtnHtml = aemId ? `<button class="deck-copy-btn" data-id="${aemId}" onclick="copyDeckID(this)" title="Copy ID">${DECK_ICON_COPY}</button>` : '';
+
+            return `
+                <tr>
+                    <td><strong>${row[0] || ''}</strong></td>
+                    <td>${aemId} ${copyBtnHtml}</td>
+                    <td>${row[2] || ''}</td>
+                </tr>
+            `;
+        }).join('');
+
+        if (query !== "") {
+            deckStatus.innerText = 'Found ' + matches.length + ' matches.';
+        } else {
+            deckStatus.innerText = '✓ ' + deckMasterData.length + ' rows loaded. Ready to search.';
+            deckTableBody.innerHTML = "";
+        }
+    });
+
+    function copyDeckID(buttonElement) {
+        const idToCopy = buttonElement.getAttribute('data-id');
+        navigator.clipboard.writeText(idToCopy).then(() => {
+            buttonElement.innerHTML = DECK_ICON_CHECK;
+            buttonElement.classList.add('copied');
+            setTimeout(() => {
+                buttonElement.innerHTML = DECK_ICON_COPY;
+                buttonElement.classList.remove('copied');
+            }, 1500);
+        });
+    }
+
+    // ==========================================================
+    // PDF EXPORT — takes exactly what's already shown in the report
+    // box and lays it into a PDF, unchanged. Does not touch the audit
+    // or the Gemini call in any way; only reads #output's text.
+    // ==========================================================
+    const exportPdfBtn = document.getElementById('exportPdfBtn');
+    exportPdfBtn.addEventListener('click', () => {
+        const reportText = document.getElementById('output').innerText;
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+
+        const marginX = 48, marginY = 56;
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+        const maxLineWidth = pageWidth - marginX * 2;
+        let y = marginY;
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(14);
+        doc.setTextColor(44, 62, 80); // #2c3e50, matches the site accent
+        doc.text('Smart AEM Auditor — Report', marginX, y);
+        y += 20;
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(10);
+        doc.setTextColor(120, 120, 120);
+        doc.text(new Date().toLocaleString(), marginX, y);
+        y += 24;
+
+        doc.setFontSize(11);
+        doc.setTextColor(30, 30, 30);
+        const lineHeight = 15;
+
+        // splitTextToSize respects the existing line breaks in the report and
+        // wraps any long lines to fit the page, so the layout matches what's
+        // already on screen instead of being restructured.
+        const lines = doc.splitTextToSize(reportText, maxLineWidth);
+        lines.forEach(line => {
+            if (y > pageHeight - marginY) {
+                doc.addPage();
+                y = marginY;
+            }
+            doc.text(line, marginX, y);
+            y += lineHeight;
+        });
+
+        const dateStamp = new Date().toISOString().slice(0, 10);
+        doc.save(`AEM-Audit-Report-${dateStamp}.pdf`);
+    });
+</script>
+
+    <footer class="py-8 text-slate-400 text-sm border-t border-slate-100 mt-12">
+        <div class="max-w-7xl mx-auto px-6 sm:px-8 lg:px-12 flex flex-col gap-6">
+
+            <div class="flex flex-col items-center gap-4 text-center sm:flex-row sm:justify-between sm:items-center sm:text-left">
+                <span>&copy; <span id="year"></span> asariko</span>
+
+                <div class="flex flex-col items-center gap-2 sm:flex-row sm:gap-4 sm:justify-end">
+                    <span>Built with simplicity</span>
+
+                    <div class="flex items-center gap-2">
+                        <a href="https://asariko.net/terms" class="hover:text-slate-900 transition-colors">Terms</a>
+                        <span class="text-slate-300">·</span>
+                        <a href="https://asariko.net/privacy" class="hover:text-slate-900 transition-colors">Privacy</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex flex-col items-center gap-2 text-center text-xs text-slate-400">
+                <p>&copy; 2026 Asariko.net | Free to use, not for sale &mdash; <a href="https://polyformproject.org/licenses/noncommercial/1.0.0" target="_blank" rel="noopener" class="hover:text-slate-900 transition-colors underline underline-offset-2">PolyForm Noncommercial 1.0.0</a></p>
+                <p>
+                    <a href="https://github.com/asariko1/smart_auditor" target="_blank" rel="noopener" class="hover:text-slate-900 transition-colors underline underline-offset-2">
+                        View Source on GitHub (Verify Privacy)
+                    </a>
+                </p>
+                <p class="italic">Your files are read in your browser and never uploaded. To perform the audit, the extracted text is sent directly to Google's Gemini API. Nothing is stored, and your API key is never saved.</p>
+            </div>
+
+        </div>
+    </footer>
+
+    <!-- Shared site behavior: mobile menu + sticky header on scroll -->
+    <script src="script.js"></script>
+
+    <script>
+        lucide.createIcons();
+        document.getElementById("year").textContent = new Date().getFullYear();
+    </script>
+</body>
+</html>
