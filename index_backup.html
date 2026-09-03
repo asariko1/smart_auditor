@@ -577,12 +577,18 @@
             ],
         },
         groq: {
-            default: 'openai/gpt-oss-20b',
+            // Compound models default to the top: they're the only Groq models with
+            // enough free-tier TPM headroom (70K) for a typical schedule + master-file
+            // prompt — the other five are capped at 8K TPM on the free tier and will
+            // hit a 413 "Request too large" error on anything but a small audit.
+            default: 'groq/compound-mini',
             models: [
-                { value: 'openai/gpt-oss-120b', label: 'OpenAI GPT-OSS 120B' },
-                { value: 'qwen/qwen3.6-27b', label: 'Qwen 3.6 27B' },
+                { value: 'groq/compound-mini', label: 'Groq Compound Mini (70K TPM free tier)' },
+                { value: 'groq/compound', label: 'Groq Compound (70K TPM free tier)' },
+                { value: 'openai/gpt-oss-120b', label: 'OpenAI GPT-OSS 120B (8K TPM free tier)' },
+                { value: 'qwen/qwen3.6-27b', label: 'Qwen 3.6 27B (8K TPM free tier)' },
                 { value: 'minimaxai/minimax-m2.7', label: 'MiniMax M2.7' },
-                { value: 'openai/gpt-oss-20b', label: 'OpenAI GPT-OSS 20B' },
+                { value: 'openai/gpt-oss-20b', label: 'OpenAI GPT-OSS 20B (8K TPM free tier)' },
                 { value: 'llama-4-scout', label: 'Llama 4 Scout' },
             ],
         },
@@ -629,6 +635,102 @@
     document.getElementById('providerSelect').onchange = (e) => populateModelSelect(e.target.value);
     populateModelSelect('gemini');
 
+    // How to reach each provider and how to pull the reply text back out of its
+    // response shape — the "coming soon" gate is gone now that all four builders
+    // below actually call their provider's API directly from the browser.
+    const PROVIDER_CONFIG = {
+        gemini: {
+            displayName: 'Google',
+            host: 'generativelanguage.googleapis.com',
+            buildRequest(model, key, prompt) {
+                return {
+                    url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+                    options: {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: prompt }] }],
+                            generationConfig: { temperature: 0.1 }
+                        })
+                    }
+                };
+            },
+            extractText(result) {
+                return result.candidates?.[0]?.content?.parts?.[0]?.text || null;
+            }
+        },
+        groq: {
+            displayName: 'Groq',
+            host: 'api.groq.com',
+            buildRequest(model, key, prompt) {
+                return {
+                    url: 'https://api.groq.com/openai/v1/chat/completions',
+                    options: {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+                        body: JSON.stringify({
+                            model,
+                            messages: [{ role: 'user', content: prompt }],
+                            temperature: 0.1
+                        })
+                    }
+                };
+            },
+            extractText(result) {
+                return result.choices?.[0]?.message?.content || null;
+            }
+        },
+        chatgpt: {
+            displayName: 'OpenAI',
+            host: 'api.openai.com',
+            buildRequest(model, key, prompt) {
+                // The o-series reasoning models (o3, o3-pro, o4-mini) only accept
+                // the default temperature and error out if one is sent.
+                const body = { model, messages: [{ role: 'user', content: prompt }] };
+                if (!/^o[0-9]/.test(model)) body.temperature = 0.1;
+                return {
+                    url: 'https://api.openai.com/v1/chat/completions',
+                    options: {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+                        body: JSON.stringify(body)
+                    }
+                };
+            },
+            extractText(result) {
+                return result.choices?.[0]?.message?.content || null;
+            }
+        },
+        claude: {
+            displayName: 'Anthropic',
+            host: 'api.anthropic.com',
+            buildRequest(model, key, prompt) {
+                return {
+                    url: 'https://api.anthropic.com/v1/messages',
+                    options: {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-api-key': key,
+                            'anthropic-version': '2023-06-01',
+                            // Required for a direct browser->API call instead of a backend proxy.
+                            'anthropic-dangerous-direct-browser-access': 'true'
+                        },
+                        body: JSON.stringify({
+                            model,
+                            max_tokens: 8192,
+                            temperature: 0.1,
+                            messages: [{ role: 'user', content: prompt }]
+                        })
+                    }
+                };
+            },
+            extractText(result) {
+                return result.content?.[0]?.text || null;
+            }
+        }
+    };
+
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
     // Helper function to write to our visual console
@@ -641,18 +743,18 @@
         ul.insertBefore(li, ul.firstChild);
     }
 
-    // Maps a Gemini API HTTP status to a plain-language explanation, so the
+    // Maps a provider's HTTP status to a plain-language explanation, so the
     // console shows something actionable instead of just a bare number.
-    function describeGeminiError(status) {
+    function describeApiError(status, providerName) {
         const table = {
             400: "Bad Request — the request body, a parameter, or the model name is wrong or missing.",
             401: "Unauthorized — the API key is missing, expired, or invalid.",
             403: "Forbidden — the API key lacks permission, or a billing/region requirement is unmet.",
             404: "Not Found — the model name or resource does not exist.",
             429: "Rate Limited — you've exceeded requests-per-minute or your daily token quota.",
-            499: "Cancelled — the connection closed or timed out before Google responded.",
-            500: "Server Error — an unexpected error on Google's end, often triggered by inputs that are too long.",
-            503: "Unavailable — Google's servers or this model are temporarily overloaded.",
+            499: `Cancelled — the connection closed or timed out before ${providerName} responded.`,
+            500: `Server Error — an unexpected error on ${providerName}'s end, often triggered by inputs that are too long.`,
+            503: `Unavailable — ${providerName}'s servers or this model are temporarily overloaded.`,
             504: "Timeout — the server took too long to process a large or complex request."
         };
         return table[status] || "Unrecognized Error — see the message below for details.";
@@ -768,14 +870,6 @@
 
         const provider = document.getElementById('providerSelect').value;
         const selectedModel = document.getElementById('modelSelect').value;
-        if (provider !== 'gemini') {
-            logToConsole("Provider Check", "NOT SUPPORTED YET", "status-error");
-            runBtn.disabled = false;
-            runBtn.innerText = "Run Audit";
-            runBtn.style.background = "#007bff";
-            runBtn.style.cursor = "pointer";
-            return alert("Groq, ChatGPT, and Claude support are coming soon. Please select Gemini for now.");
-        }
 
         if (!isExcelReady || (!isPdfReady && !isMasterExcelReady)) {
             logToConsole("File Check", "NOT READY", "status-error");
@@ -786,8 +880,10 @@
             return alert("Please ensure you have uploaded the AEM File to Audit (1) AND a Master File (2 or OR).");
         }
 
+        const providerConfig = PROVIDER_CONFIG[provider];
+
         logToConsole("Pre-flight Checks", "PASSED", "status-ok");
-        logToConsole("Connecting to Google Servers...", "WAITING", "status-wait");
+        logToConsole(`Connecting to ${providerConfig.displayName} Servers...`, "WAITING", "status-wait");
 
 	  // --- Master PDF and Master Excel is a variable now ---
       
@@ -823,24 +919,19 @@
         If perfectly matched, say: "The AEM Export file is a 100% match with the ${masterTypeName}."`;
 
         try {
-            logToConsole("Sent to Google API", "YES", "status-ok");
+            logToConsole(`Sent to ${providerConfig.displayName} API`, "YES", "status-ok");
+
+            const { url, options } = providerConfig.buildRequest(selectedModel, key, prompt);
 
             let response;
             try {
-                response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${key}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{ parts: [{ text: prompt }] }],
-                        generationConfig: { temperature: 0.1 }
-                    })
-                });
+                response = await fetch(url, options);
             } catch (networkErr) {
-                // The request never reached Google at all — offline, DNS failure, or
-                // the network/firewall blocking generativelanguage.googleapis.com.
+                // The request never reached the provider at all — offline, DNS failure, or
+                // the network/firewall blocking its API host.
                 // Flagged right here (not guessed from the exception type below),
                 // so a later, unrelated bug can't get mislabeled as "no connection".
-                const wrapped = new Error("Could not reach Google's servers. Check your internet connection, or ask IT whether this network blocks generativelanguage.googleapis.com.");
+                const wrapped = new Error(`Could not reach ${providerConfig.displayName}'s servers. Check your internet connection, or ask IT whether this network blocks ${providerConfig.host}.`);
                 wrapped.isNetworkFailure = true;
                 throw wrapped;
             }
@@ -849,7 +940,7 @@
                 // .catch() guards against error responses that aren't valid JSON
                 // (some 5xx errors return an empty or non-JSON body)
                 const errorData = await response.json().catch(() => ({}));
-                const friendly = describeGeminiError(response.status);
+                const friendly = describeApiError(response.status, providerConfig.displayName);
                 const shortReason = friendly.split(' — ')[0]; // e.g. "Unauthorized" — the full sentence goes in the output box below
                 logToConsole(`API Error [${response.status}] — ${shortReason}`, "FAILED", "status-error");
                 const apiError = new Error(
@@ -864,15 +955,10 @@
             logToConsole("Waiting for AI processing...", "WAITING", "status-wait");
 
             const result = await response.json();
+            const text = providerConfig.extractText(result);
 
-           // --- T..... & C....  (GEMINI 3.0 FLASH) ---
-
-            // ----------------------------
-            // ----------------------------
-
-             // Original output logic
-            if (result.candidates && result.candidates[0].content.parts[0].text) {
-                document.getElementById('output').innerText = result.candidates[0].content.parts[0].text;
+            if (text) {
+                document.getElementById('output').innerText = text;
                 logToConsole("Audit Complete", "SUCCESS", "status-ok");
                 exportPdfBtn.disabled = false;
             } else {
