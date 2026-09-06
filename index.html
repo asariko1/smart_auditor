@@ -87,6 +87,37 @@
             box-shadow: 0 0 0 3px rgba(44, 62, 80, 0.08);
         }
 
+        /* Exact-Match Precheck toggle — its HTML is currently commented out
+           (needs more testing) but the styles stay ready for when it's
+           re-enabled. */
+        .switch-row { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; }
+        .switch-row:has(input:disabled) { opacity: 0.5; cursor: not-allowed; }
+        .switch { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; margin-top: 2px; }
+        .switch input:disabled { cursor: not-allowed; }
+        .switch input:disabled + .switch-slider { cursor: not-allowed; }
+        .switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+        .switch-slider {
+            position: absolute; inset: 0;
+            background: #cbd5e1;
+            border-radius: 999px;
+            transition: background-color 0.2s ease;
+        }
+        .switch-slider::before {
+            content: "";
+            position: absolute;
+            height: 16px; width: 16px;
+            left: 3px; top: 3px;
+            background: #fff;
+            border-radius: 50%;
+            transition: transform 0.2s ease;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+        }
+        .switch input:checked + .switch-slider { background: #2c3e50; }
+        .switch input:checked + .switch-slider::before { transform: translateX(18px); }
+        .switch input:focus-visible + .switch-slider { box-shadow: 0 0 0 3px rgba(44, 62, 80, 0.2); }
+        .switch-text { font-size: 13px; font-weight: 600; color: #2c3e50; }
+        .switch-text small { display: block; font-weight: 400; color: #64748b; font-size: 11px; margin-top: 3px; line-height: 1.4; }
+
         .drop-zone {
             border: 2px dashed #2c3e50;
             padding: 24px;
@@ -446,6 +477,27 @@
                         <input type="text" id="apiKey" placeholder="Paste your API Key here...">
                     </div>
 
+                    <!-- Exact-Match Precheck toggle — commented out for now, needs
+                         more testing before going live. The underlying JS (in the
+                         script below) still exists and runs its "off" behavior
+                         (time normalization, no row removal) unconditionally;
+                         re-enable by uncommenting this block AND swapping the
+                         hardcoded `precheckEnabled = false` back to reading this
+                         checkbox in the Run Audit handler.
+                    <div class="input-group">
+                        <label class="switch-row">
+                            <span class="switch">
+                                <input type="checkbox" id="precheckToggle">
+                                <span class="switch-slider"></span>
+                            </span>
+                            <span class="switch-text">
+                                Exact-Match Precheck
+                                <small id="precheckNote">Auto-removes rows that match exactly between the AEM file and Master Excel before sending to the AI. Off by default — toggle on and re-run to compare against a regular report.</small>
+                            </span>
+                        </label>
+                    </div>
+                    -->
+
                     <div class="drop-zone" onclick="document.getElementById('excelFile').click()">
                         <strong>1. Upload AEM Excel/CSV File</strong>
                         <input type="file" id="excelFile" hidden accept=".xlsx, .csv">
@@ -517,8 +569,10 @@
 
 <script>
     let excelText = "";
+    let excelRows = [];
     let pdfText = "";
     let masterExcelText = "";
+    let masterExcelRows = [];
     let isExcelReady = false;
     let isPdfReady = false;
     let isMasterExcelReady = false;
@@ -552,6 +606,340 @@
         return table[status] || "Unrecognized Error — see the message below for details.";
     }
 
+    // Called only when a response comes back 200 OK but with no usable text,
+    // so the error shown says WHY instead of just guessing "safety filters".
+    function diagnoseGeminiEmpty(result) {
+        const reason = result.promptFeedback?.blockReason || result.candidates?.[0]?.finishReason;
+        return reason ? `Reason: ${reason}.` : '';
+    }
+
+    // ==========================================================
+    // MODEL FALLBACK — tries each model in order; on a transient
+    // server error (503/500/502/504) it retries the SAME model once
+    // with a short backoff before giving up on it, but on a rate
+    // limit (429) or missing model (404) it switches immediately
+    // since retrying the same model won't help either of those.
+    // A genuine client error (400/401/403 — bad key or bad request)
+    // aborts the whole chain right away, since no model will fix that.
+    // No artificial per-request timeout or overall time budget — a
+    // real audit prompt can legitimately take anywhere from 30s to a
+    // few minutes to generate, and fetch() already rejects on its own
+    // if a connection is genuinely dead, so an extra cutoff here would
+    // only risk killing a slow-but-working request before it finishes.
+    // ==========================================================
+
+    const FALLBACK_MODELS = [
+        "gemini-3.6-flash",
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+    ];
+    const MAX_RETRIES_PER_MODEL = 1;
+    const BASE_RETRY_DELAY_S = 4;
+    const MAX_RETRY_DELAY_S = 12;
+    // Bounded, not infinite — if every model in the list has already failed
+    // once, a second full pass gives a genuinely transient issue (a 503 blip,
+    // a momentary rate-limit window) a chance to have cleared. Two full-list
+    // failures in a row is a strong enough signal to stop and report back
+    // rather than loop forever.
+    const MAX_ROUNDS = 2;
+
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    // 503/500/502/504/499 are treated as transient (worth one retry on
+    // the same model); 429/404 switch models immediately; anything else
+    // in the 4xx range aborts the whole chain rather than repeating the
+    // same mistake on every model.
+    function classifyGeminiStatus(status) {
+        if (status === 429 || status === 404) return 'switch';
+        if (status === 500 || status === 502 || status === 503 || status === 504 || status === 499) return 'retry';
+        if (status >= 400 && status < 500) return 'abort';
+        return 'switch';
+    }
+
+    // Same log line as logToConsole, but returns an updater so a single
+    // entry can tick down live instead of spamming a new line every second.
+    function logToConsoleLive(message, statusText, statusClass) {
+        const ul = document.getElementById('systemLog');
+        const li = document.createElement('li');
+        const time = new Date().toLocaleTimeString();
+        const render = (msg, sText, sClass) => {
+            li.innerHTML = `<span class="log-time">[${time}]</span> ${msg} <span class="${sClass}">[${sText}]</span>`;
+        };
+        render(message, statusText, statusClass);
+        ul.insertBefore(li, ul.firstChild);
+        return { update: render };
+    }
+
+    // Ticks a live countdown in the console before a same-model retry.
+    async function countdownWait(model, attempt) {
+        const jitter = Math.random();
+        let remaining = Math.ceil(Math.min(MAX_RETRY_DELAY_S, BASE_RETRY_DELAY_S * (2 ** attempt)) + jitter);
+
+        const live = logToConsoleLive(`Retrying ${model} in ${remaining}s...`, "WAITING", "status-wait");
+        while (remaining > 0) {
+            await sleep(1000);
+            remaining--;
+            live.update(remaining > 0 ? `Retrying ${model} in ${remaining}s...` : `Retrying ${model} now...`, "WAITING", "status-wait");
+        }
+    }
+
+    // Tries each model in FALLBACK_MODELS in order, retrying/switching per
+    // classifyGeminiStatus above, for up to MAX_ROUNDS full passes through
+    // the list. Returns the report text on the first success, or throws the
+    // last error once every model in every round is exhausted.
+    async function generateWithFallback(prompt, key) {
+        let lastError = null;
+
+        for (let round = 1; round <= MAX_ROUNDS; round++) {
+            const roundLabel = MAX_ROUNDS > 1 ? `Round ${round}/${MAX_ROUNDS}: ` : '';
+
+            for (const model of FALLBACK_MODELS) {
+            for (let attempt = 0; attempt <= MAX_RETRIES_PER_MODEL; attempt++) {
+                logToConsole(`${roundLabel}Trying ${model} (attempt ${attempt + 1}/${MAX_RETRIES_PER_MODEL + 1})...`, "WAITING", "status-wait");
+
+                let response;
+                try {
+                    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: prompt }] }],
+                            generationConfig: { temperature: 0.1 }
+                        })
+                    });
+                } catch (networkErr) {
+                    logToConsole(`${model}: network error`, "FAILED", "status-error");
+                    lastError = new Error(`Could not reach Google's servers for ${model}. Check your internet connection, or ask IT whether this network blocks generativelanguage.googleapis.com.`);
+                    lastError.isNetworkFailure = true;
+                    lastError.alreadyLogged = true;
+                    if (attempt < MAX_RETRIES_PER_MODEL) {
+                        await countdownWait(model, attempt);
+                        continue;
+                    }
+                    break; // move to next model
+                }
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    const friendly = describeGeminiError(response.status);
+                    const shortReason = friendly.split(' — ')[0];
+                    logToConsole(`${model}: [${response.status}] ${shortReason}`, "FAILED", "status-error");
+
+                    const httpError = new Error(`[${response.status}] ${friendly}` + (errorData.error?.message ? ` — ${errorData.error.message}` : ''));
+                    httpError.status = response.status;
+                    httpError.alreadyLogged = true;
+                    lastError = httpError;
+
+                    const strategy = classifyGeminiStatus(response.status);
+                    if (strategy === 'abort') throw httpError; // a different model won't fix a bad key or bad request
+
+                    if (strategy === 'retry' && attempt < MAX_RETRIES_PER_MODEL) {
+                        await countdownWait(model, attempt);
+                        continue;
+                    }
+                    logToConsole(`${model} unavailable — switching model`, "INFO", "status-wait");
+                    break; // next model
+                }
+
+                const result = await response.json();
+                const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (text) {
+                    logToConsole(`${model}: SUCCESS`, "OK", "status-ok");
+                    return text;
+                }
+
+                const diagnostic = diagnoseGeminiEmpty(result);
+                lastError = new Error(`${model} returned an empty response.${diagnostic ? ' ' + diagnostic : ' Check safety filters.'}`);
+                lastError.alreadyLogged = true;
+                logToConsole(`${model}: empty response — switching model`, "FAILED", "status-error");
+                break; // next model — retrying won't change a blocked/empty response
+            }
+            }
+        }
+
+        if (lastError) { lastError.alreadyLogged = true; throw lastError; }
+        throw Object.assign(new Error("All Gemini models failed."), { alreadyLogged: true });
+    }
+
+    // ==========================================================
+    // EXACT-MATCH PRECHECK — runs entirely client-side, before any
+    // API call. Rows that are byte-for-byte identical (after only
+    // whitespace/quote-style/case normalization — never a venue-synonym
+    // or fuzzy-title guess) between the AEM file and the Master Excel
+    // don't need an LLM's judgment, so they're pulled out of the prompt.
+    // Anything even slightly different is left for the AI to review,
+    // same as before. Only runs for Master Excel (not PDF) — a PDF's
+    // free text has no columns to detect.
+    //
+    // TEMPORARILY DISABLED (needs more testing) — the UI toggle above is
+    // commented out and `precheckEnabled` is hardcoded to false in the
+    // Run Audit handler below, so `runExactMatchPrecheck` never actually
+    // runs right now. `buildNormalizedText` (the "off" behavior — times
+    // normalized, no rows removed) still runs unconditionally, since
+    // that part is already well-tested.
+    // ==========================================================
+
+    const PRECHECK_NOTE_DEFAULT = "Auto-removes rows that match exactly between the AEM file and Master Excel before sending to the AI. Off by default — toggle on and re-run to compare against a regular report.";
+    const PRECHECK_NOTE_PDF = "Not available for a PDF master — there are no columns to match against. Upload a Master Excel/CSV instead to use this.";
+
+    // A PDF master is free text with no rows/columns to match against, so the
+    // precheck can never run against one — disabling it here avoids leaving
+    // a toggle on that silently does nothing, per Master Excel's priority
+    // over PDF when both are uploaded (see masterTruthText below). No-ops
+    // safely while the toggle's HTML is commented out (elements are null).
+    function updatePrecheckAvailability() {
+        const toggle = document.getElementById('precheckToggle');
+        const note = document.getElementById('precheckNote');
+        if (!toggle || !note) return;
+        const pdfOnly = isPdfReady && !isMasterExcelReady;
+        toggle.disabled = pdfOnly;
+        if (pdfOnly) toggle.checked = false;
+        note.textContent = pdfOnly ? PRECHECK_NOTE_PDF : PRECHECK_NOTE_DEFAULT;
+    }
+
+    // Column order isn't assumed to match between the two files (or
+    // between different audits) — headers are matched by keyword instead.
+    function detectRowColumns(headerRow) {
+        if (!headerRow) return null;
+        const norm = (h) => String(h || '').toLowerCase();
+        const find = (needle) => headerRow.findIndex(h => norm(h).includes(needle));
+        const titleIdx = find('title');
+        const venueIdx = find('venue');
+        const startIdx = headerRow.findIndex(h => norm(h).includes('start'));
+        const endIdx = headerRow.findIndex(h => norm(h).includes('end'));
+        if (titleIdx === -1 || venueIdx === -1 || startIdx === -1) return null;
+        return { titleIdx, venueIdx, startIdx, endIdx };
+    }
+
+    // Only collapses whitespace/case/typographic quote-and-dash variants —
+    // never touches wording, so two genuinely different titles never match.
+    function normalizeMatchText(s) {
+        return String(s || '')
+            .replace(/[‘’‛]/g, "'")
+            .replace(/[“”]/g, '"')
+            .replace(/[–—−]/g, '-')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+    }
+
+    // Handles both "4:00 PM" and 24h "16:00"/"9:30" — returns minutes
+    // since midnight, or null if the value can't be parsed (in which case
+    // the row is always left for the AI rather than risking a bad match).
+    function parseTimeToMinutes(s) {
+        const str = String(s || '').trim();
+        if (!str) return null;
+        let m = str.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+        if (m) {
+            let h = parseInt(m[1], 10) % 12;
+            if (/pm/i.test(m[3])) h += 12;
+            return h * 60 + parseInt(m[2], 10);
+        }
+        m = str.match(/^(\d{1,2}):(\d{2})$/);
+        if (m) {
+            const h = parseInt(m[1], 10);
+            if (h > 23) return null;
+            return h * 60 + parseInt(m[2], 10);
+        }
+        if (/^noon$/i.test(str)) return 720;
+        if (/^midnight$/i.test(str)) return 0;
+        return null;
+    }
+
+    // Inverse of parseTimeToMinutes — always 12h AM/PM, so both files read in
+    // one unambiguous format and the AI never has to convert times itself
+    // (previously it would burn its output budget re-listing the whole
+    // schedule in a "normalized" form instead of actually comparing).
+    function formatTimeAMPM(minutes) {
+        const h24 = Math.floor(minutes / 60) % 24;
+        const m = minutes % 60;
+        const period = h24 < 12 ? 'AM' : 'PM';
+        const h12 = h24 % 12 || 12;
+        return `${h12}:${String(m).padStart(2, '0')} ${period}`;
+    }
+
+    const buildRowEntries = (rows, cols) => rows.slice(1)
+        .filter(r => r && r[cols.titleIdx])
+        .map(r => ({
+            raw: r,
+            title: normalizeMatchText(r[cols.titleIdx]),
+            venue: normalizeMatchText(r[cols.venueIdx]),
+            start: parseTimeToMinutes(r[cols.startIdx]),
+            end: cols.endIdx > -1 ? parseTimeToMinutes(r[cols.endIdx]) : null,
+        }));
+
+    // Falls back to the original raw string for a value that couldn't be
+    // parsed (e.g. "till late") rather than dropping it.
+    const entriesToText = (entries, cols) => {
+        const header = 'Title,Venue,Start Time,End Time';
+        const lines = entries.map(e => {
+            const r = e.raw;
+            const startOut = e.start !== null ? formatTimeAMPM(e.start) : r[cols.startIdx];
+            const endOut = e.end !== null ? formatTimeAMPM(e.end) : (cols.endIdx > -1 ? r[cols.endIdx] : '');
+            return `${r[cols.titleIdx]},${r[cols.venueIdx]},${startOut},${endOut}`;
+        });
+        return lines.length ? `${header}\n${lines.join('\n')}` : `${header}\n(none — every row auto-matched)`;
+    };
+
+    // Used when the precheck toggle is off (or finds nothing to remove) —
+    // still normalizes times for every row, just doesn't drop any rows.
+    // Returns null when columns can't be detected, so the caller falls back
+    // to the original unmodified sheet_to_txt text.
+    function buildNormalizedText(rows) {
+        if (!rows || !rows.length) return null;
+        const cols = detectRowColumns(rows[0]);
+        if (!cols) return null;
+        return entriesToText(buildRowEntries(rows, cols), cols);
+    }
+
+    // Returns null when either file's columns can't be detected (caller
+    // falls back to sending the full text, unchanged). Otherwise returns
+    // the auto-matched count plus compact leftover text for each side.
+    function runExactMatchPrecheck(masterRows, aemRows) {
+        if (!masterRows || !masterRows.length || !aemRows || !aemRows.length) return null;
+        const masterCols = detectRowColumns(masterRows[0]);
+        const aemCols = detectRowColumns(aemRows[0]);
+        if (!masterCols || !aemCols) return null;
+
+        const masterEntries = buildRowEntries(masterRows, masterCols);
+        const aemEntries = buildRowEntries(aemRows, aemCols);
+        const aemClaimed = new Array(aemEntries.length).fill(false);
+        let matchedCount = 0;
+        const leftoverMaster = [];
+
+        masterEntries.forEach(mEntry => {
+            if (mEntry.start === null) { leftoverMaster.push(mEntry); return; }
+            const idx = aemEntries.findIndex((aEntry, i) =>
+                !aemClaimed[i] &&
+                aEntry.title === mEntry.title &&
+                aEntry.venue === mEntry.venue &&
+                aEntry.start === mEntry.start &&
+                aEntry.end === mEntry.end
+            );
+            if (idx > -1) {
+                aemClaimed[idx] = true;
+                matchedCount++;
+            } else {
+                leftoverMaster.push(mEntry);
+            }
+        });
+
+        const leftoverAem = aemEntries.filter((_, i) => !aemClaimed[i]);
+
+        return {
+            matchedCount,
+            leftoverMasterCount: leftoverMaster.length,
+            leftoverAemCount: leftoverAem.length,
+            leftoverMasterText: entriesToText(leftoverMaster, masterCols),
+            leftoverExcelText: entriesToText(leftoverAem, aemCols),
+        };
+    }
+
     // 1. Excel Parsing
     document.getElementById('excelFile').onchange = (e) => {
         const file = e.target.files[0];
@@ -567,6 +955,7 @@
                 const wb = XLSX.read(data, {type: 'array'});
                 const ws = wb.Sheets[wb.SheetNames[0]];
                 excelText = XLSX.utils.sheet_to_txt(ws);
+                excelRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false });
                 isExcelReady = true;
                 document.getElementById('excelName').innerText = "Ready: " + file.name;
                 logToConsole("Excel Data Extracted", "OK", "status-ok");
@@ -598,6 +987,7 @@
                 }
                 pdfText = text;
                 isPdfReady = true;
+                updatePrecheckAvailability();
                 document.getElementById('pdfName').innerText = "Ready: " + file.name;
                 logToConsole("PDF Text Extracted", "OK", "status-ok");
             } catch (err) {
@@ -621,7 +1011,9 @@
                 const wb = XLSX.read(data, {type: 'array'});
                 const ws = wb.Sheets[wb.SheetNames[0]];
                 masterExcelText = XLSX.utils.sheet_to_txt(ws);
+                masterExcelRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false });
                 isMasterExcelReady = true;
+                updatePrecheckAvailability();
                 document.getElementById('masterExcelName').innerText = "Ready: " + file.name;
                 logToConsole("Master Excel Extracted", "OK", "status-ok");
             };
@@ -671,18 +1063,65 @@
         logToConsole("Pre-flight Checks", "PASSED", "status-ok");
         logToConsole("Connecting to Google Servers...", "WAITING", "status-wait");
 
-	  // --- Master PDF and Master Excel is a variable now ---
-      
-
         const masterTruthText = isMasterExcelReady ? masterExcelText : pdfText;
         const masterTypeName = isMasterExcelReady ? "Master Excel" : "Master PDF";
 
+        // Exact-match precheck — TEMPORARILY DISABLED (hardcoded off) pending
+        // more testing; see the note on the toggle HTML above and on the
+        // precheck functions above for how to re-enable. Time normalization
+        // (the "off" behavior) still runs unconditionally since that part is
+        // already well-tested.
+        let promptMasterText = masterTruthText;
+        let promptExcelText = excelText;
+        let timesNormalized = false;
+        const precheckEnabled = false; // TODO: restore `document.getElementById('precheckToggle').checked` once re-enabled
+        if (!precheckEnabled) {
+            logToConsole("Exact-Match Precheck", "OFF (regular report)", "status-wait");
+            if (isMasterExcelReady) {
+                const normMaster = buildNormalizedText(masterExcelRows);
+                const normAem = buildNormalizedText(excelRows);
+                if (normMaster && normAem) {
+                    promptMasterText = normMaster;
+                    promptExcelText = normAem;
+                    timesNormalized = true;
+                }
+            }
+        } else if (isMasterExcelReady) {
+            const precheck = runExactMatchPrecheck(masterExcelRows, excelRows);
+            if (precheck) {
+                logToConsole(
+                    `Exact-Match Precheck: ${precheck.matchedCount} auto-matched, ${precheck.leftoverMasterCount + precheck.leftoverAemCount} left for AI review`,
+                    "OK", "status-ok"
+                );
+                if (precheck.leftoverMasterCount === 0 && precheck.leftoverAemCount === 0) {
+                    outputDiv.innerText = `The AEM Export file is a 100% match with the ${masterTypeName}.`;
+                    logToConsole("Audit Complete", "SUCCESS (precheck only, no API call)", "status-ok");
+                    exportPdfBtn.disabled = false;
+                    runBtn.disabled = false;
+                    runBtn.innerText = "Run Audit";
+                    runBtn.style.background = "#007bff";
+                    runBtn.style.cursor = "pointer";
+                    return;
+                }
+                promptMasterText = precheck.leftoverMasterText;
+                promptExcelText = precheck.leftoverExcelText;
+                timesNormalized = true;
+            } else {
+                logToConsole("Exact-Match Precheck", "SKIPPED (Title/Venue/Start columns not detected)", "status-wait");
+            }
+        }
+
+        const timeRule = timesNormalized
+            ? "3. All times below are already in 12h AM/PM format (both files) — compare them directly, no conversion needed. Display all times in the report in this same 12h AM/PM format."
+            : "3. Match 24h Excel times (e.g. 16:00) to 12h Master times (e.g. 4:00 pm). Display all times in the report in 12h AM/PM format.";
+
         const prompt = `You are an expert scheduling auditor.
         Compare the File to AEM Audit (Excel) to the ${masterTypeName}.
+        Output ONLY the 5 report sections below — never restate, re-list, or "normalize" the input schedules as your answer.
         RULES:
         1. ${masterTypeName} is the absolute Source of Truth.
         2. If PDF uploaded: Focus on components: GOOD TO KNOW, THINGS TO DO, SPA, MUSIC, and ENTERTAINMENT.
-        3. Match 24h Excel times (e.g. 16:00) to 12h Master times (e.g. 4:00 pm).
+        ${timeRule}
         4. Titles: Two titles may be treated as the same activity ONLY if they describe the
             identical event — same subject, same person, performer, host, or band, and the same type of activity — just worded, ordered, or formatted differently
             (e.g. "Adult Volleyball Competition" matches "Volleyball Competition: Adults (18+)").
@@ -691,76 +1130,29 @@
             do NOT match, even if the time and venue are identical. Report these under TITLE / CONTENT MISMATCHES.
         5. Venues: Allow synonyms (e.g. "Pool Deck" matches "Poolside" or "Photo Gallery" matches "Focus Photo Gallery").
         6. Times: Must be an exact match.
-        
-        Source of Truth (${masterTypeName}): ${masterTruthText}
-        File to AEM Audit (Excel): ${excelText}
+        7. Master ID: The 5th column of the Master file is a unique ID for that activity.
+            Include that Master ID next to the activity when reporting a MISSING activity
+            (present in Master but absent from AEM), a VENUE MISMATCH, or a TITLE / CONTENT
+            MISMATCH. Do NOT include an ID for TIME MISMATCHES, for EXTRA activities
+            (present in AEM but not in Master — they have no Master ID), or for DUPLICATES. If the Master file has no ID column, ignore all ID instructions above and report normally.
+
+        Source of Truth (${masterTypeName}): ${promptMasterText}
+        File to AEM Audit (Excel): ${promptExcelText}
 
         Report in these sections:
-        1. MISSING OR EXTRA ACTIVITIES
+        1. MISSING OR EXTRA ACTIVITIES (Add Master ID for activities missing from AEM — no ID for extras)
         2. TIME MISMATCHES
-        3. VENUE MISMATCHES (Add time for referance)
-        4. TITLE / CONTENT MISMATCHES (Add time/venue for referance)
+        3. VENUE MISMATCHES (Add time and Master ID for reference)
+        4. TITLE / CONTENT MISMATCHES (Add time/venue and Master ID for referance)
 	    5. DUBLICATES
-        
+
         If perfectly matched, say: "The AEM Export file is a 100% match with the ${masterTypeName}."`;
 
         try {
-            logToConsole("Sent to Google API", "YES", "status-ok");
-
-            let response;
-            try {
-                response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${key}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{ parts: [{ text: prompt }] }],
-                        generationConfig: { temperature: 0.1 }
-                    })
-                });
-            } catch (networkErr) {
-                // The request never reached Google at all — offline, DNS failure, or
-                // the network/firewall blocking generativelanguage.googleapis.com.
-                // Flagged right here (not guessed from the exception type below),
-                // so a later, unrelated bug can't get mislabeled as "no connection".
-                const wrapped = new Error("Could not reach Google's servers. Check your internet connection, or ask IT whether this network blocks generativelanguage.googleapis.com.");
-                wrapped.isNetworkFailure = true;
-                throw wrapped;
-            }
-
-            if (!response.ok) {
-                // .catch() guards against error responses that aren't valid JSON
-                // (some 5xx errors return an empty or non-JSON body)
-                const errorData = await response.json().catch(() => ({}));
-                const friendly = describeGeminiError(response.status);
-                const shortReason = friendly.split(' — ')[0]; // e.g. "Unauthorized" — the full sentence goes in the output box below
-                logToConsole(`API Error [${response.status}] — ${shortReason}`, "FAILED", "status-error");
-                const apiError = new Error(
-                    `[${response.status}] ${friendly}` +
-                    (errorData.error?.message ? ` — ${errorData.error.message}` : '')
-                );
-                apiError.alreadyLogged = true; // stop the catch below from logging a second, less useful line on top
-                throw apiError;
-            }
-
-            logToConsole("API Request Accepted", "YES", "status-ok");
-            logToConsole("Waiting for AI processing...", "WAITING", "status-wait");
-
-            const result = await response.json();
-
-           // --- T..... & C....  (GEMINI 3.0 FLASH) ---
-
-            // ----------------------------
-            // ----------------------------
-
-             // Original output logic
-            if (result.candidates && result.candidates[0].content.parts[0].text) {
-                document.getElementById('output').innerText = result.candidates[0].content.parts[0].text;
-                logToConsole("Audit Complete", "SUCCESS", "status-ok");
-                exportPdfBtn.disabled = false;
-            } else {
-                throw new Error("AI returned an empty response. Check safety filters.");
-            }
-
+            const text = await generateWithFallback(prompt, key);
+            document.getElementById('output').innerText = text;
+            logToConsole("Audit Complete", "SUCCESS", "status-ok");
+            exportPdfBtn.disabled = false;
         } catch (err) {
             if (err.isNetworkFailure) {
                 logToConsole("Network Request Failed", "NO CONNECTION", "status-error");
